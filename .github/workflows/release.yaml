@@ -59,9 +59,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.1
+      - name: Download Artifacts
+        uses: actions/download-artifact@v6.2.0
+        with:
+          pattern: imagery-desktop-*
+          path: release_assets
+
       - name: Semantic Release
+        id: semantic
         uses: go-semantic-release/action@v1.24.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           allow-initial-development-versions: true
           force-bump-patch-version: true
+
+      - name: Upload Release Assets
+        if: steps.semantic.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ steps.semantic.outputs.version }}"
+          echo "Uploading assets to release $VERSION"
+
+          # Iterate over all downloaded artifacts
+          find release_assets -type f | while read -r file; do
+            echo "Uploading $file..."
+            gh release upload "$VERSION" "$file" --clobber
+          done
