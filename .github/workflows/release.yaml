@@ -83,14 +83,40 @@ jobs:
         run: |
           VERSION="${{ needs.get-version.outputs.version }}"
           echo "Building version $VERSION for ${{ matrix.os }}"
-          wails build -platform ${{ matrix.os == 'macos-latest' && 'darwin/universal' || 'windows/amd64,linux/amd64' }} ${{ matrix.os == 'ubuntu-latest' && '-tags webkit2_41' || '' }}
+
+          # Determine platform target
+          PLATFORM=""
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            PLATFORM="darwin/universal"
+          elif [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            PLATFORM="windows/amd64"
+          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            PLATFORM="linux/amd64"
+          fi
+
+          echo "Target Platform: $PLATFORM"
+          wails build -platform $PLATFORM ${{ matrix.os == 'ubuntu-latest' && '-tags webkit2_41' || '' }} -clean
 
           # Rename binaries to include version
           cd build/bin
+          ls -R # Debug: list files to see what was built
+
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            mv imagery-desktop.exe "imagery-desktop-${VERSION}-windows-amd64.exe"
+            # Wails might output with -amd64 suffix or without
+            if [ -f "imagery-desktop-amd64.exe" ]; then
+                mv "imagery-desktop-amd64.exe" "imagery-desktop-${VERSION}-windows-amd64.exe"
+            elif [ -f "imagery-desktop.exe" ]; then
+                mv "imagery-desktop.exe" "imagery-desktop-${VERSION}-windows-amd64.exe"
+            else
+                echo "Error: Could not find Windows binary to rename"
+                exit 1
+            fi
           elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            mv imagery-desktop "imagery-desktop-${VERSION}-linux-amd64"
+             if [ -f "imagery-desktop-amd64" ]; then
+                mv "imagery-desktop-amd64" "imagery-desktop-${VERSION}-linux-amd64"
+             else
+                mv "imagery-desktop" "imagery-desktop-${VERSION}-linux-amd64"
+             fi
           fi
 
       - name: Package macOS App
