@@ -79,23 +79,37 @@ jobs:
           fi
 
       - name: Build
+        shell: bash
         run: |
+          VERSION="${{ needs.get-version.outputs.version }}"
+          echo "Building version $VERSION for ${{ matrix.os }}"
           wails build -platform ${{ matrix.os == 'macos-latest' && 'darwin/universal' || 'windows/amd64,linux/amd64' }} ${{ matrix.os == 'ubuntu-latest' && '-tags webkit2_41' || '' }}
+
+          # Rename binaries to include version
+          cd build/bin
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            mv imagery-desktop.exe "imagery-desktop-${VERSION}-windows-amd64.exe"
+          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            mv imagery-desktop "imagery-desktop-${VERSION}-linux-amd64"
+          fi
 
       - name: Package macOS App
         if: matrix.os == 'macos-latest'
+        shell: bash
         run: |
+          VERSION="${{ needs.get-version.outputs.version }}"
           cd build/bin
-          zip -r imagery-desktop-macos.zip imagery-desktop.app
+          # Zip the .app bundle with versioned name
+          zip -r "imagery-desktop-${VERSION}-macos.zip" imagery-desktop.app
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: imagery-desktop-${{ matrix.os }}
           path: |
-            build/bin/imagery-desktop-macos.zip
-            build/bin/imagery-desktop-amd64.exe
-            build/bin/imagery-desktop-linux-amd64
+            build/bin/imagery-desktop-*-macos.zip
+            build/bin/imagery-desktop-*-windows-amd64.exe
+            build/bin/imagery-desktop-*-linux-amd64
 
   release:
     needs: [get-version, build]
