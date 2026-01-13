@@ -1,0 +1,33 @@
+# Wails
+build/bin
+build/wails.exe
+build/wails
+frontend/dist
+wailsjs/
+
+# Go
+go.sum
+vendor/
+*.exe
+*.test
+*.prof
+*.pprof
+*.out
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
