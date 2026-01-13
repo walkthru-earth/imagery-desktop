@@ -98,6 +98,6 @@ See [Wails documentation](https://wails.io/docs/reference/project-config) for al
 - [Tailwind CSS Documentation](https://tailwindcss.com/)
 - [shadcn/ui Documentation](https://ui.shadcn.com/)
 
-## 📝 License
+## ⚠️ Educational Purpose
 
-This template is available as open source under the terms of the MIT License.
+This project is created for **educational purposes only**. It comes with **no license** and is provided as-is, without any warranty. You may use it to learn, but please respect the lack of a formal open-source license.
