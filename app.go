@@ -21,8 +21,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"imagery-desktop/pkg/geotiff"
+
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
-	"golang.org/x/image/tiff"
 
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
@@ -442,6 +443,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 
 // saveAsGeoTIFF saves an image as a georeferenced TIFF using world file and projection file
 // World files are universally supported and the most reliable georeferencing method
+// saveAsGeoTIFF saves an image as a georeferenced TIFF with embedded tags (EPSG:3857)
 func (a *App) saveAsGeoTIFF(img image.Image, outputPath string, originX, originY, pixelWidth, pixelHeight float64) error {
 	// Create TIFF file
 	f, err := os.Create(outputPath)
@@ -450,29 +452,35 @@ func (a *App) saveAsGeoTIFF(img image.Image, outputPath string, originX, originY
 	}
 	defer f.Close()
 
-	// Encode as TIFF (uncompressed for maximum compatibility)
-	if err := tiff.Encode(f, img, nil); err != nil {
-		return fmt.Errorf("failed to encode TIFF: %w", err)
+	// Define GeoKeys (EPSG:3857 Web Mercator)
+	extraTags := make(map[uint16]interface{})
+
+	// Tag 34735: GeoKeyDirectoryTag (SHORT)
+	// Version=1, UPDATE=1, Minor=0, Keys=3
+	// 1024 (GTModelType) = 1 (Projected)
+	// 1025 (GTRasterType) = 1 (PixelIsArea)
+	// 3072 (ProjectedCSType) = 3857 (Web Mercator)
+	extraTags[geotiff.TagType_GeoKeyDirectoryTag] = []uint16{
+		1, 1, 0, 3,
+		1024, 0, 1, 1,
+		1025, 0, 1, 1,
+		3072, 0, 1, 3857,
 	}
 
-	// Write world file (.tfw) for georeferencing
-	basePath := outputPath[:len(outputPath)-4] // Remove .tif
-	tfwPath := basePath + ".tfw"
-	worldFile := fmt.Sprintf("%.10f\n0\n0\n%.10f\n%.10f\n%.10f\n",
-		pixelWidth,
-		-pixelHeight,
-		originX+pixelWidth/2,
-		originY-pixelHeight/2,
-	)
-	if err := os.WriteFile(tfwPath, []byte(worldFile), 0644); err != nil {
-		return fmt.Errorf("failed to write world file: %w", err)
-	}
+	// Tag 33550: ModelPixelScaleTag (DOUBLE)
+	// ScaleX, ScaleY, ScaleZ (0)
+	// Note: ScaleY is positive magnitude. Standard GeoTIFF assumes Y increases upwards in model space
+	// but downwards in raster space, which Tiepoint handles or implied standard.
+	extraTags[geotiff.TagType_ModelPixelScaleTag] = []float64{pixelWidth, pixelHeight, 0.0}
 
-	// Write .prj file for CRS (EPSG:3857 Web Mercator)
-	prjPath := basePath + ".prj"
-	prjContent := `PROJCS["WGS_1984_Web_Mercator_Auxiliary_Sphere",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Mercator_Auxiliary_Sphere"],PARAMETER["False_Easting",0.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",0.0],PARAMETER["Standard_Parallel_1",0.0],PARAMETER["Auxiliary_Sphere_Type",0.0],UNIT["Meter",1.0]]`
-	if err := os.WriteFile(prjPath, []byte(prjContent), 0644); err != nil {
-		return fmt.Errorf("failed to write projection file: %w", err)
+	// Tag 33922: ModelTiepointTag (DOUBLE)
+	// I, J, K (Raster coords), X, Y, Z (Model coords)
+	// Map (0,0) pixel to (originX, originY)
+	extraTags[geotiff.TagType_ModelTiepointTag] = []float64{0.0, 0.0, 0.0, originX, originY, 0.0}
+
+	// Encode as GeoTIFF
+	if err := geotiff.Encode(f, img, extraTags); err != nil {
+		return fmt.Errorf("failed to encode GeoTIFF: %w", err)
 	}
 
 	return nil
