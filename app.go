@@ -161,6 +161,7 @@ func (a *App) GetEsriLayers() ([]AvailableDate, error) {
 }
 
 // GetAvailableDatesForArea returns available imagery dates for a specific area
+// Returns LayerDate (not CaptureDate) since download functions need the layer date to find tiles
 func (a *App) GetAvailableDatesForArea(bbox BoundingBox, zoom int) ([]AvailableDate, error) {
 	// Get center tile
 	centerLat := (bbox.South + bbox.North) / 2
@@ -181,7 +182,9 @@ func (a *App) GetAvailableDatesForArea(bbox BoundingBox, zoom int) ([]AvailableD
 	var dates []AvailableDate
 
 	for _, dt := range datedTiles {
-		dateStr := dt.CaptureDate.Format("2006-01-02")
+		// Use LayerDate (Esri Wayback layer date) not CaptureDate
+		// LayerDate is needed by download functions to find the correct layer
+		dateStr := dt.LayerDate.Format("2006-01-02")
 		if !seen[dateStr] {
 			seen[dateStr] = true
 			dates = append(dates, AvailableDate{
@@ -418,6 +421,13 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		// Save as GeoTIFF with embedded projection (pure Go, no GDAL)
 		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("esri_%s_z%d.tif", date, zoom))
 
+		// Emit progress for GeoTIFF conversion phase
+		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+			Downloaded: total,
+			Total:      total,
+			Percent:    99,
+			Status:     "Converting to GeoTIFF...",
+		})
 		a.emitLog("Creating GeoTIFF...")
 		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
@@ -435,7 +445,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
-		Status:     "Download complete",
+		Status:     "Complete",
 	})
 
 	return nil
@@ -611,6 +621,13 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		// Save as GeoTIFF with embedded projection
 		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d.tif", timestamp, zoom))
 
+		// Emit progress for GeoTIFF conversion phase
+		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+			Downloaded: total,
+			Total:      total,
+			Percent:    99,
+			Status:     "Converting to GeoTIFF...",
+		})
 		a.emitLog("Creating GeoTIFF...")
 		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
@@ -628,7 +645,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
-		Status:     "Download complete",
+		Status:     "Complete",
 	})
 
 	return nil
@@ -636,15 +653,29 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 
 // DownloadEsriImageryRange downloads Esri Wayback imagery for multiple dates (bulk download)
 // format: "tiles" = individual tiles only, "geotiff" = merged GeoTIFF only, "both" = keep both
+// This function deduplicates by checking the center tile - dates with identical imagery are skipped
 func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []string, format string) error {
 	if len(dates) == 0 {
 		return fmt.Errorf("no dates provided")
 	}
 
-	a.emitLog(fmt.Sprintf("Starting bulk download for %d dates", len(dates)))
+	a.emitLog(fmt.Sprintf("Starting bulk download for %d dates (with deduplication)", len(dates)))
 
 	// Sort dates for consistent output
 	sort.Strings(dates)
+
+	// Get center tile for deduplication check
+	centerLat := (bbox.South + bbox.North) / 2
+	centerLon := (bbox.West + bbox.East) / 2
+	centerTile, err := esri.GetTileForWgs84(centerLat, centerLon, zoom)
+	if err != nil {
+		return fmt.Errorf("failed to get center tile: %w", err)
+	}
+
+	// Track seen tile hashes to skip duplicates
+	seenHashes := make(map[string]string) // hash -> first date that had this imagery
+	downloadedCount := 0
+	skippedCount := 0
 
 	total := len(dates)
 	for i, date := range dates {
@@ -652,11 +683,53 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 			Downloaded: i,
 			Total:      total,
 			Percent:    (i * 100) / total,
-			Status:     fmt.Sprintf("Processing date %d/%d: %s", i+1, total, date),
+			Status:     fmt.Sprintf("Checking date %d/%d: %s", i+1, total, date),
+		})
+
+		// Find layer for this date
+		layer, err := a.findLayerForDate(date)
+		if err != nil {
+			a.emitLog(fmt.Sprintf("Skipping %s: %v", date, err))
+			skippedCount++
+			continue
+		}
+
+		// Fetch center tile to check for duplicates
+		tileData, err := a.esriClient.FetchTile(layer, centerTile)
+		if err != nil || len(tileData) == 0 {
+			a.emitLog(fmt.Sprintf("Skipping %s: no tile data available", date))
+			skippedCount++
+			continue
+		}
+
+		// Compute simple hash of tile data (first 1KB + last 1KB + length)
+		var hashKey string
+		if len(tileData) < 2048 {
+			hashKey = fmt.Sprintf("%x-%d", tileData, len(tileData))
+		} else {
+			hashKey = fmt.Sprintf("%x-%x-%d", tileData[:1024], tileData[len(tileData)-1024:], len(tileData))
+		}
+
+		// Check if we've seen this imagery before
+		if firstDate, exists := seenHashes[hashKey]; exists {
+			a.emitLog(fmt.Sprintf("Skipping %s: identical to %s", date, firstDate))
+			skippedCount++
+			continue
+		}
+		seenHashes[hashKey] = date
+
+		// Download this unique date
+		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+			Downloaded: i,
+			Total:      total,
+			Percent:    (i * 100) / total,
+			Status:     fmt.Sprintf("Downloading unique date %d/%d: %s", downloadedCount+1, total, date),
 		})
 
 		if err := a.DownloadEsriImagery(bbox, zoom, date, format); err != nil {
 			a.emitLog(fmt.Sprintf("Failed to download %s: %v", date, err))
+		} else {
+			downloadedCount++
 		}
 	}
 
@@ -665,8 +738,10 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
-		Status:     fmt.Sprintf("Downloaded %d dates", total),
+		Status:     fmt.Sprintf("Downloaded %d unique dates (skipped %d duplicates)", downloadedCount, skippedCount),
 	})
+
+	a.emitLog(fmt.Sprintf("Bulk download complete: %d unique, %d skipped", downloadedCount, skippedCount))
 
 	return nil
 }
@@ -790,10 +865,15 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 	// Get all GE tiles needed to cover this Web Mercator tile
 	// Try at the requested zoom level first, then fall back to lower zooms if tiles aren't available
 	geTiles := make(map[string]image.Image)
+	sourceZoom := z
+
+	// Get geographic bounds of the requested Web Mercator tile (fixed for all attempts)
+	south, west, north, east := googleearth.WebMercatorTileBounds(x, y, z)
 
 	// Try to fetch tiles, with fallback to lower zoom levels
 	for tryZoom := z; tryZoom >= 10 && len(geTiles) == 0; tryZoom-- {
-		requiredTiles := googleearth.GetRequiredGETiles(x, y, tryZoom)
+		// Find GE tiles at tryZoom that cover the same geographic area
+		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
 		if len(requiredTiles) == 0 {
 			continue
 		}
@@ -818,8 +898,11 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 			geTiles[key] = img
 		}
 
-		if len(geTiles) > 0 && tryZoom < z {
-			log.Printf("[GETile] z=%d x=%d y=%d: fell back to zoom %d", z, x, y, tryZoom)
+		if len(geTiles) > 0 {
+			sourceZoom = tryZoom
+			if tryZoom < z {
+				log.Printf("[GETile] z=%d x=%d y=%d: fell back to zoom %d", z, x, y, tryZoom)
+			}
 		}
 	}
 
@@ -829,8 +912,8 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reproject to Web Mercator
-	output := googleearth.ReprojectToWebMercator(geTiles, x, y, z, TileSize)
+	// Reproject to Web Mercator (using source zoom for tile lookups)
+	output := googleearth.ReprojectToWebMercatorWithSourceZoom(geTiles, x, y, z, sourceZoom, TileSize)
 
 	// Encode as JPEG
 	var buf bytes.Buffer
@@ -930,29 +1013,44 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Get all GE tiles needed to cover this Web Mercator tile
-	requiredTiles := googleearth.GetRequiredGETiles(x, y, z)
-
-	// Fetch and decode all required GE tiles (with per-tile epoch lookup)
+	// Try to fetch historical tiles, with fallback to lower zoom levels
+	// Historical imagery may not be available at high zoom levels (16+)
 	geTiles := make(map[string]image.Image)
-	for _, tc := range requiredTiles {
-		tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
-		if err != nil {
-			continue
+	sourceZoom := z
+
+	// Get geographic bounds of the requested Web Mercator tile (fixed for all attempts)
+	south, west, north, east := googleearth.WebMercatorTileBounds(x, y, z)
+
+	for tryZoom := z; tryZoom >= 10 && len(geTiles) == 0; tryZoom-- {
+		// Find GE tiles at tryZoom that cover the same geographic area
+		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
+
+		for _, tc := range requiredTiles {
+			tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
+			if err != nil {
+				continue
+			}
+
+			data, err := a.fetchHistoricalGETile(tile, hexDate)
+			if err != nil {
+				continue
+			}
+
+			img, _, err := image.Decode(bytes.NewReader(data))
+			if err != nil {
+				continue
+			}
+
+			key := fmt.Sprintf("%d,%d", tc.Row, tc.Column)
+			geTiles[key] = img
 		}
 
-		data, err := a.fetchHistoricalGETile(tile, hexDate)
-		if err != nil {
-			continue
+		if len(geTiles) > 0 {
+			sourceZoom = tryZoom
+			if tryZoom < z {
+				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d", z, x, y, hexDate, tryZoom)
+			}
 		}
-
-		img, _, err := image.Decode(bytes.NewReader(data))
-		if err != nil {
-			continue
-		}
-
-		key := fmt.Sprintf("%d,%d", tc.Row, tc.Column)
-		geTiles[key] = img
 	}
 
 	if len(geTiles) == 0 {
@@ -960,8 +1058,8 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Reproject to Web Mercator
-	output := googleearth.ReprojectToWebMercator(geTiles, x, y, z, TileSize)
+	// Reproject to Web Mercator (using source zoom for tile lookups)
+	output := googleearth.ReprojectToWebMercatorWithSourceZoom(geTiles, x, y, z, sourceZoom, TileSize)
 
 	// Encode as JPEG
 	var buf bytes.Buffer
@@ -1217,6 +1315,13 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		// Save as GeoTIFF with embedded projection
 		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d.tif", dateStr, zoom))
 
+		// Emit progress for GeoTIFF conversion phase
+		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+			Downloaded: total,
+			Total:      total,
+			Percent:    99,
+			Status:     "Converting to GeoTIFF...",
+		})
 		a.emitLog("Creating GeoTIFF...")
 		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
@@ -1234,7 +1339,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
-		Status:     "Download complete",
+		Status:     "Complete",
 	})
 
 	return nil

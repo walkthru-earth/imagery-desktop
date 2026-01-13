@@ -392,7 +392,11 @@ type TileCoord struct {
 // GetRequiredGETiles returns all GE tiles needed to cover a Web Mercator XYZ tile
 func GetRequiredGETiles(x, y, z int) []TileCoord {
 	south, west, north, east := WebMercatorTileBounds(x, y, z)
+	return GetGETilesForBounds(south, west, north, east, z)
+}
 
+// GetGETilesForBounds returns all GE tiles at a given zoom level that cover the specified geographic bounds
+func GetGETilesForBounds(south, west, north, east float64, z int) []TileCoord {
 	numTiles := float64(int(1) << z)
 
 	// Convert bounds to GE row/col range
@@ -423,15 +427,25 @@ func GetRequiredGETiles(x, y, z int) []TileCoord {
 // x, y, z are the Web Mercator tile coordinates
 // tileSize is typically 256
 func ReprojectToWebMercator(geTiles map[string]image.Image, x, y, z, tileSize int) *image.RGBA {
+	return ReprojectToWebMercatorWithSourceZoom(geTiles, x, y, z, z, tileSize)
+}
+
+// ReprojectToWebMercatorWithSourceZoom creates a Web Mercator tile by sampling from GE tile images
+// that may be at a different zoom level than the output tile
+// geTiles is a map from "row,col" to the decoded image for that GE tile (at sourceZoom)
+// x, y, z are the Web Mercator tile coordinates for the output
+// sourceZoom is the zoom level of the source GE tiles
+// tileSize is typically 256
+func ReprojectToWebMercatorWithSourceZoom(geTiles map[string]image.Image, x, y, z, sourceZoom, tileSize int) *image.RGBA {
 	output := image.NewRGBA(image.Rect(0, 0, tileSize, tileSize))
 
 	for py := 0; py < tileSize; py++ {
 		for px := 0; px < tileSize; px++ {
-			// Get lat/lon for this output pixel
+			// Get lat/lon for this output pixel (at the output zoom z)
 			lat, lon := PixelToLatLon(x, y, z, px, py, tileSize)
 
-			// Find which GE tile and pixel this corresponds to
-			geRow, geCol, gePx, gePy := LatLonToGETilePixel(lat, lon, z, tileSize)
+			// Find which GE tile and pixel this corresponds to (at the source zoom)
+			geRow, geCol, gePx, gePy := LatLonToGETilePixel(lat, lon, sourceZoom, tileSize)
 
 			// Look up the source tile
 			key := fmt.Sprintf("%d,%d", geRow, geCol)

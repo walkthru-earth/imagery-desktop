@@ -473,7 +473,7 @@ function App() {
 
   }, [mapLoaded, selectedDateIndex, availableDates, activeSource, geDates, geSelectedDateIndex, addLog]);
 
-  // Load available Esri dates
+  // Load available Esri dates (all layers - deduplication happens at download time)
   useEffect(() => {
     GetEsriLayers().then((dates) => {
       if (dates && dates.length > 0) {
@@ -1195,16 +1195,38 @@ function App() {
           </Card>
         </div>
 
-        {/* Download Button & Progress */}
+        {/* Download Progress Modal */}
+        <Dialog open={isDownloading} onOpenChange={() => {}}>
+          <DialogContent className="sm:max-w-lg" onPointerDownOutside={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Download className="h-5 w-5 animate-pulse" />
+                Downloading Imagery
+              </DialogTitle>
+            </DialogHeader>
+            {downloadProgress && (
+              <div className="space-y-4">
+                <Progress value={downloadProgress.percent} className="h-2" />
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium">{downloadProgress.percent}%</span>
+                  <span className="text-muted-foreground">{downloadProgress.downloaded}/{downloadProgress.total}</span>
+                </div>
+                <p className="text-sm text-center text-muted-foreground">
+                  {downloadProgress.status}
+                </p>
+                {/* Live log viewer */}
+                <div className="bg-muted rounded p-2 h-32 overflow-y-auto font-mono text-xs">
+                  {logs.slice(-10).map((log, i) => (
+                    <div key={i} className="py-0.5 text-muted-foreground">{log}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Download Button */}
         <div className="p-4 border-t space-y-3">
-          {downloadProgress && isDownloading && (
-            <div className="space-y-2">
-              <Progress value={downloadProgress.percent} />
-              <p className="text-xs text-center text-muted-foreground">
-                {downloadProgress.status}
-              </p>
-            </div>
-          )}
           <Button
             className="w-full"
             size="lg"
