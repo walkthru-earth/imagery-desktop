@@ -9,5 +9,12 @@
   "author": {
     "name": "walkthru earth",
     "email": "hi@walkthru.earth"
+  },
+  "info": {
+    "companyName": "Walkthru Earth",
+    "productName": "Imagery Desktop",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 Walkthru Earth",
+    "comments": "Walkthru Earth Imagery Processing Application"
   }
 }
