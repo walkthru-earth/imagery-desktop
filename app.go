@@ -170,17 +170,20 @@ type DownloadProgress struct {
 
 // App struct
 type App struct {
-	ctx           context.Context
-	geClient      *googleearth.Client
-	esriClient    *esri.Client
-	tileCache     *cache.TileCache
-	downloader    *imagery.TileDownloader
-	downloadPath  string
-	tileServerURL string
-	settings      *config.UserSettings
-	mu            sync.Mutex
-	devMode       bool // Enable verbose logging in dev mode only
-	phClient      posthog.Client
+	ctx               context.Context
+	geClient          *googleearth.Client
+	esriClient        *esri.Client
+	tileCache         *cache.TileCache
+	downloader        *imagery.TileDownloader
+	downloadPath      string
+	tileServerURL     string
+	settings          *config.UserSettings
+	mu                sync.Mutex
+	devMode           bool // Enable verbose logging in dev mode only
+	phClient          posthog.Client
+	inRangeDownload   bool // Track if we're downloading a date range (suppress per-tile progress)
+	currentDateIndex  int  // Current date being processed in range download
+	totalDatesInRange int  // Total dates in range download
 }
 
 // NewApp creates a new App application struct
@@ -546,11 +549,23 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		// Emit progress with clear status based on format
 		percent := int((count * 100) / int64(total))
 		var status string
-		if format == "geotiff" || format == "both" {
-			status = fmt.Sprintf("Downloading and merging %d/%d tiles", count, total)
+
+		// If in range download mode, include date context
+		if a.inRangeDownload {
+			dateProgress := fmt.Sprintf("Date %d/%d", a.currentDateIndex, a.totalDatesInRange)
+			if format == "geotiff" || format == "both" {
+				status = fmt.Sprintf("%s: Downloading tile %d/%d", dateProgress, count, total)
+			} else {
+				status = fmt.Sprintf("%s: Downloading tile %d/%d", dateProgress, count, total)
+			}
 		} else {
-			status = fmt.Sprintf("Downloading %d/%d tiles", count, total)
+			if format == "geotiff" || format == "both" {
+				status = fmt.Sprintf("Downloading and merging %d/%d tiles", count, total)
+			} else {
+				status = fmt.Sprintf("Downloading %d/%d tiles", count, total)
+			}
 		}
+
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: int(count),
 			Total:      total,
@@ -953,14 +968,16 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 	downloadedCount := 0
 	skippedCount := 0
 
+	// Enable range download mode for unified progress
+	a.inRangeDownload = true
+	a.totalDatesInRange = len(dates)
+	defer func() {
+		a.inRangeDownload = false
+	}()
+
 	total := len(dates)
 	for i, date := range dates {
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: i,
-			Total:      total,
-			Percent:    (i * 100) / total,
-			Status:     fmt.Sprintf("Checking date %d/%d: %s", i+1, total, date),
-		})
+		a.currentDateIndex = i + 1
 
 		// Find layer for this date
 		layer, err := a.findLayerForDate(date)
@@ -995,13 +1012,6 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 		seenHashes[hashKey] = date
 
 		// Download this unique date
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: i,
-			Total:      total,
-			Percent:    (i * 100) / total,
-			Status:     fmt.Sprintf("Downloading unique date %d/%d: %s", downloadedCount+1, total, date),
-		})
-
 		if err := a.DownloadEsriImagery(bbox, zoom, date, format); err != nil {
 			a.emitLog(fmt.Sprintf("Failed to download %s: %v", date, err))
 		} else {
@@ -2035,14 +2045,16 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 
 	a.emitLog(fmt.Sprintf("Starting bulk download for %d Google Earth dates", len(dates)))
 
+	// Enable range download mode for unified progress
+	a.inRangeDownload = true
+	a.totalDatesInRange = len(dates)
+	defer func() {
+		a.inRangeDownload = false
+	}()
+
 	total := len(dates)
 	for i, dateInfo := range dates {
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: i,
-			Total:      total,
-			Percent:    (i * 100) / total,
-			Status:     fmt.Sprintf("Processing date %d/%d: %s", i+1, total, dateInfo.Date),
-		})
+		a.currentDateIndex = i + 1
 
 		if err := a.DownloadGoogleEarthHistoricalImagery(bbox, zoom, dateInfo.HexDate, dateInfo.Epoch, dateInfo.Date, format); err != nil {
 			a.emitLog(fmt.Sprintf("Failed to download %s: %v", dateInfo.Date, err))
