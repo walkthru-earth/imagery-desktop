@@ -198,6 +198,8 @@ html, body, #root {
 .maplibregl-compare .compare-swiper-vertical {
   cursor: ew-resize;
   z-index: 50 !important;
+  background-color: hsl(var(--primary)) !important;
+  box-shadow: 0 0 10px rgba(0,0,0,0.3);
 }
 
 .maplibregl-compare-horizontal {
@@ -208,6 +210,8 @@ html, body, #root {
 .maplibregl-compare .compare-swiper-horizontal {
   cursor: ns-resize;
   z-index: 50 !important;
+  background-color: hsl(var(--primary)) !important;
+  box-shadow: 0 0 10px rgba(0,0,0,0.3);
 }
 
 /* Custom Range Slider Styling - Earth Green Theme */
