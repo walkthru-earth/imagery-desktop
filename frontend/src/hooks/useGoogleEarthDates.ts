@@ -66,7 +66,7 @@ export function useGoogleEarthDates(
 
     // Create debounced version (500ms delay)
     const debouncedFetch = debounce(() => {
-      console.log("[useGoogleEarthDates] Map moveend triggered (debounced)");
+      console.log("[useGoogleEarthDates] Map moveend/idle triggered (debounced)");
       fetchDates(map);
     }, 500);
 
@@ -75,17 +75,23 @@ export function useGoogleEarthDates(
       console.log("[useGoogleEarthDates] Map loaded, fetching initial dates");
       fetchDates(map);
     } else {
-      console.log("[useGoogleEarthDates] Map not yet loaded, waiting for load event");
+      console.log("[useGoogleEarthDates] Map not yet loaded, waiting for load");
+      map.once("load", () => {
+         console.log("[useGoogleEarthDates] Map load event, fetching dates");
+         fetchDates(map);
+      });
     }
 
-    // Fetch on map movement (debounced)
+    // Fetch on map movement and idle states (debounced)
     map.on("moveend", debouncedFetch);
-    console.log("[useGoogleEarthDates] Added moveend listener");
+    map.on("idle", debouncedFetch); // Also listen to idle to catch cases where tiles finish loading
+    console.log("[useGoogleEarthDates] Added moveend/idle listeners");
 
     // Cleanup
     return () => {
-      console.log("[useGoogleEarthDates] Cleaning up moveend listener");
+      console.log("[useGoogleEarthDates] Cleaning up listeners");
       map.off("moveend", debouncedFetch);
+      map.off("idle", debouncedFetch);
     };
   }, [map, enabled, fetchDates]);
 

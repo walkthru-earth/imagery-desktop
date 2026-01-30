@@ -1,4 +1,4 @@
-import { useEffect, useState, RefObject } from "react";
+import { useEffect, useState, useRef, RefObject } from "react";
 import maplibregl from "maplibre-gl";
 
 // Map styles for light and dark mode (CartoDB vector tiles)
@@ -73,6 +73,9 @@ export function useMapInstance(
     };
   }, []); // Only run once on mount
 
+  // Track current theme to avoid redundant setStyle calls
+  const currentThemeRef = useRef<"light" | "dark">(theme);
+
   // Update theme when it changes
   useEffect(() => {
     if (!map) {
@@ -80,7 +83,14 @@ export function useMapInstance(
       return;
     }
 
+    // Skip if theme hasn't changed (avoids wiping layers on init)
+    if (currentThemeRef.current === theme) {
+      console.log("[useMapInstance] Theme matched current, skipping setStyle");
+      return;
+    }
+
     console.log("[useMapInstance] Updating map style to theme:", theme);
+    currentThemeRef.current = theme;
     map.setStyle(MAP_STYLES[theme]);
 
     // Notify when new style is loaded
