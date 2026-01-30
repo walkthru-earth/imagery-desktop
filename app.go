@@ -2085,9 +2085,11 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 	}
 
 	a.emitLog(fmt.Sprintf("Starting timelapse video export for %d dates", len(dates)))
+	a.emitLog(fmt.Sprintf("Source: %s, Zoom: %d", source, zoom))
 
 	// Get download directory
 	downloadDir := a.downloadPath
+	a.emitLog(fmt.Sprintf("Download directory: %s", downloadDir))
 
 	// Prepare video export options
 	var preset video.SocialMediaPreset
@@ -2172,11 +2174,15 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		filename := generateGeoTIFFFilename(source, dateInfo.Date, bbox, zoom)
 		geotiffPath := filepath.Join(downloadDir, filename)
 
+		a.emitLog(fmt.Sprintf("Looking for GeoTIFF: %s", geotiffPath))
+
 		// Check if GeoTIFF exists
 		if _, err := os.Stat(geotiffPath); os.IsNotExist(err) {
-			a.emitLog(fmt.Sprintf("GeoTIFF not found for %s, skipping: %s", dateInfo.Date, geotiffPath))
+			a.emitLog(fmt.Sprintf("❌ GeoTIFF not found for %s: %s", dateInfo.Date, geotiffPath))
 			continue
 		}
+
+		a.emitLog(fmt.Sprintf("✅ Found GeoTIFF for %s", dateInfo.Date))
 
 		// Load image
 		img, err := a.loadGeoTIFFImage(geotiffPath)
@@ -2225,11 +2231,14 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		})
 	}
 
+	a.emitLog(fmt.Sprintf("Total frames loaded: %d", len(frames)))
+
 	if len(frames) == 0 {
+		a.emitLog("❌ ERROR: No frames loaded - ensure GeoTIFFs are downloaded first")
 		return fmt.Errorf("no frames loaded - ensure GeoTIFFs are downloaded first")
 	}
 
-	a.emitLog(fmt.Sprintf("Loaded %d frames, starting video encoding...", len(frames)))
+	a.emitLog(fmt.Sprintf("✅ Loaded %d frames successfully, starting video encoding...", len(frames)))
 
 	// Generate output filename
 	outputFilename := fmt.Sprintf("%s_timelapse_%s_to_%s_%s.%s",
