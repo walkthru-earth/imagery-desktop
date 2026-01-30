@@ -37,6 +37,7 @@ import (
 var (
 	PostHogKey  string
 	PostHogHost string
+	AppVersion  string = "0.0.0-dev"
 )
 
 // ImagerySource represents the source of imagery
@@ -211,7 +212,7 @@ func (a *App) Shutdown(ctx context.Context) {
 
 // GetAppVersion returns the current application version
 func (a *App) GetAppVersion() string {
-	return "0.1.0"
+	return AppVersion
 }
 
 // GetTileInfo calculates tile information for a bounding box

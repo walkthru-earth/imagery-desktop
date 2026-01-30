@@ -35,6 +35,8 @@ export function useMapInstance(
       style: MAP_STYLES[theme],
       center: [31.2357, 30.0444], // Cairo, Egypt
       zoom: 10,
+      // @ts-ignore - preserveDrawingBuffer is valid WebGL context option
+      preserveDrawingBuffer: true, // Required for canvas recording/screenshots
     });
 
     // Add event listeners for debugging

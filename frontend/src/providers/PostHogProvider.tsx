@@ -26,7 +26,14 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       },
       // Explicitly disable capturing input values
       mask_all_element_attributes: true, 
-      mask_all_text: true
+      mask_all_text: true,
+      // Enable session recording with canvas support
+      disable_session_recording: false,
+      session_recording: {
+        maskAllInputs: false,
+        recordCanvas: true, // Enable canvas recording (WebGL/MapLibre)
+        canvasFps: 3, // Limit FPS to avoid performance hit
+      } as any
     });
   }, []);
 
