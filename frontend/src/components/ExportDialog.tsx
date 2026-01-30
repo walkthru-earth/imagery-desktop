@@ -125,59 +125,83 @@ export function ExportDialog({
         }
 
         // Video export if requested (after GeoTIFFs are downloaded)
-        console.log("[ExportDialog] Video export check:", { includeVideo, format, willExport: includeVideo && format !== "tiles" });
+        console.log("[ExportDialog] Video export check:", {
+          includeVideo,
+          format,
+          willExport: includeVideo && format !== "tiles",
+          dateRangeLength: dateRange?.length
+        });
 
         if (includeVideo && format !== "tiles") {
-          console.log("[ExportDialog] Starting video export...");
-          setProgress({
-            downloaded: 0,
-            total: 1,
-            percent: 0,
-            status: "Starting video export..."
+          try {
+            console.log("[ExportDialog] Starting video export...");
+            setProgress({
+              downloaded: 0,
+              total: 1,
+              percent: 0,
+              status: "Starting video export..."
+            });
+
+            // Prepare video export options with sensible defaults
+            const videoOpts = new main.VideoExportOptions({
+              width: 1920,
+              height: 1080,
+              preset: "youtube", // Default preset
+              spotlightEnabled: false,
+              spotlightCenterLat: 0,
+              spotlightCenterLon: 0,
+              spotlightRadiusKm: 1.0,
+              overlayOpacity: 0.6,
+              showDateOverlay: true,
+              dateFontSize: 48,
+              datePosition: "bottom-right",
+              frameDelay: 0.5, // 2 images per second
+              outputFormat: videoFormat,
+              quality: 90,
+            });
+
+            // Convert dateRange to proper GEDateInfo array
+            const geDatesForVideo: GEDateInfo[] = dateRange.map(d => ({
+              date: d.date,
+              hexDate: d.hexDate || "",
+              epoch: d.epoch || 0,
+            }));
+
+            console.log("[ExportDialog] Calling exportTimelapseVideo with:", {
+              bbox,
+              zoom: exportZoom,
+              dateCount: geDatesForVideo.length,
+              source: source === "esri" ? "esri" : "ge_historical",
+              videoOpts,
+              dates: geDatesForVideo.map(d => d.date)
+            });
+
+            const result = await api.exportTimelapseVideo(
+              bbox,
+              exportZoom,
+              geDatesForVideo,
+              source === "esri" ? "esri" : "ge_historical",
+              videoOpts
+            );
+
+            console.log("[ExportDialog] Video export completed successfully, result:", result);
+          } catch (videoError) {
+            console.error("[ExportDialog] Video export failed:", videoError);
+            console.error("[ExportDialog] Video error stack:", videoError instanceof Error ? videoError.stack : "no stack");
+            // Don't throw - let the main export succeed even if video fails
+            setProgress({
+              downloaded: 0,
+              total: 1,
+              percent: 0,
+              status: `Video export failed: ${videoError}`
+            });
+          }
+        } else {
+          console.log("[ExportDialog] Skipping video export because:", {
+            includeVideo,
+            format,
+            reason: !includeVideo ? "includeVideo is false" : "format is tiles"
           });
-
-          // Prepare video export options with sensible defaults
-          const videoOpts = new main.VideoExportOptions({
-            width: 1920,
-            height: 1080,
-            preset: "youtube", // Default preset
-            spotlightEnabled: false,
-            spotlightCenterLat: 0,
-            spotlightCenterLon: 0,
-            spotlightRadiusKm: 1.0,
-            overlayOpacity: 0.6,
-            showDateOverlay: true,
-            dateFontSize: 48,
-            datePosition: "bottom-right",
-            frameDelay: 0.5, // 2 images per second
-            outputFormat: videoFormat,
-            quality: 90,
-          });
-
-          // Convert dateRange to proper GEDateInfo array
-          const geDatesForVideo: GEDateInfo[] = dateRange.map(d => ({
-            date: d.date,
-            hexDate: d.hexDate || "",
-            epoch: d.epoch || 0,
-          }));
-
-          console.log("[ExportDialog] Calling exportTimelapseVideo with:", {
-            bbox,
-            zoom: exportZoom,
-            dateCount: geDatesForVideo.length,
-            source: source === "esri" ? "esri" : "ge_historical",
-            videoOpts
-          });
-
-          await api.exportTimelapseVideo(
-            bbox,
-            exportZoom,
-            geDatesForVideo,
-            source === "esri" ? "esri" : "ge_historical",
-            videoOpts
-          );
-
-          console.log("[ExportDialog] Video export completed successfully");
         }
       } else {
         // Single date export

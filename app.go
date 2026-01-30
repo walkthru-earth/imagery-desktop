@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/draw"
 	"image/jpeg"
+	_ "image/png" // Register PNG decoder
 	"log"
 	"math"
 	"net"
@@ -33,6 +34,8 @@ import (
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/imagery"
 	"imagery-desktop/internal/video"
+
+	_ "golang.org/x/image/tiff" // Register TIFF decoder for GeoTIFF loading
 )
 
 // Linker flags
@@ -2080,15 +2083,23 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 
 // ExportTimelapseVideo exports a timelapse video from a range of downloaded imagery
 func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInfo, source string, videoOpts VideoExportOptions) error {
+	log.Printf("=== ExportTimelapseVideo CALLED ===")
+	log.Printf("Parameters: bbox=%+v, zoom=%d, source=%s, dateCount=%d", bbox, zoom, source, len(dates))
+	log.Printf("VideoOpts: %+v", videoOpts)
+
 	if len(dates) == 0 {
+		log.Printf("ERROR: No dates provided to ExportTimelapseVideo")
 		return fmt.Errorf("no dates provided")
 	}
 
+	log.Printf("[VideoExport] Starting timelapse video export for %d dates", len(dates))
+	log.Printf("[VideoExport] Source: %s, Zoom: %d", source, zoom)
 	a.emitLog(fmt.Sprintf("Starting timelapse video export for %d dates", len(dates)))
 	a.emitLog(fmt.Sprintf("Source: %s, Zoom: %d", source, zoom))
 
 	// Get download directory
 	downloadDir := a.downloadPath
+	log.Printf("[VideoExport] Download directory: %s", downloadDir)
 	a.emitLog(fmt.Sprintf("Download directory: %s", downloadDir))
 
 	// Prepare video export options
@@ -2153,16 +2164,21 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 	}
 
 	// Create video exporter
+	log.Printf("[VideoExport] Creating video exporter...")
 	exporter, err := video.NewExporter(opts)
 	if err != nil {
+		log.Printf("[VideoExport] ERROR: Failed to create video exporter: %v", err)
 		return fmt.Errorf("failed to create video exporter: %w", err)
 	}
 	defer exporter.Close()
+	log.Printf("[VideoExport] Video exporter created successfully")
 
 	// Load frames from GeoTIFFs
 	frames := make([]video.Frame, 0, len(dates))
+	log.Printf("[VideoExport] Starting frame loading loop for %d dates", len(dates))
 
 	for i, dateInfo := range dates {
+		log.Printf("[VideoExport] Processing date %d/%d: %s", i+1, len(dates), dateInfo.Date)
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: i,
 			Total:      len(dates),
@@ -2174,22 +2190,28 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		filename := generateGeoTIFFFilename(source, dateInfo.Date, bbox, zoom)
 		geotiffPath := filepath.Join(downloadDir, filename)
 
+		log.Printf("[VideoExport] Looking for GeoTIFF: %s", geotiffPath)
 		a.emitLog(fmt.Sprintf("Looking for GeoTIFF: %s", geotiffPath))
 
 		// Check if GeoTIFF exists
 		if _, err := os.Stat(geotiffPath); os.IsNotExist(err) {
+			log.Printf("[VideoExport] ❌ GeoTIFF not found for %s: %s", dateInfo.Date, geotiffPath)
 			a.emitLog(fmt.Sprintf("❌ GeoTIFF not found for %s: %s", dateInfo.Date, geotiffPath))
 			continue
 		}
 
+		log.Printf("[VideoExport] ✅ Found GeoTIFF for %s", dateInfo.Date)
 		a.emitLog(fmt.Sprintf("✅ Found GeoTIFF for %s", dateInfo.Date))
 
 		// Load image
+		log.Printf("[VideoExport] Attempting to load image from: %s", geotiffPath)
 		img, err := a.loadGeoTIFFImage(geotiffPath)
 		if err != nil {
+			log.Printf("[VideoExport] ❌ ERROR: Failed to load GeoTIFF for %s: %v", dateInfo.Date, err)
 			a.emitLog(fmt.Sprintf("Failed to load GeoTIFF for %s: %v", dateInfo.Date, err))
 			continue
 		}
+		log.Printf("[VideoExport] ✅ Successfully loaded image for %s", dateInfo.Date)
 
 		// Convert to RGBA if needed
 		var rgba *image.RGBA
@@ -2231,13 +2253,16 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		})
 	}
 
+	log.Printf("[VideoExport] Total frames loaded: %d", len(frames))
 	a.emitLog(fmt.Sprintf("Total frames loaded: %d", len(frames)))
 
 	if len(frames) == 0 {
+		log.Printf("[VideoExport] ❌ ERROR: No frames loaded - ensure GeoTIFFs are downloaded first")
 		a.emitLog("❌ ERROR: No frames loaded - ensure GeoTIFFs are downloaded first")
 		return fmt.Errorf("no frames loaded - ensure GeoTIFFs are downloaded first")
 	}
 
+	log.Printf("[VideoExport] ✅ Loaded %d frames successfully, starting video encoding...", len(frames))
 	a.emitLog(fmt.Sprintf("✅ Loaded %d frames successfully, starting video encoding...", len(frames)))
 
 	// Generate output filename

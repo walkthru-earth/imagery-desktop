@@ -6,7 +6,7 @@ require (
 	github.com/icza/mjpeg v0.0.0-20230330134156-38318e5ab8f4
 	github.com/posthog/posthog-go v1.9.1
 	github.com/wailsapp/wails/v2 v2.11.0
-	golang.org/x/image v0.25.0
+	golang.org/x/image v0.35.0
 )
 
 require (
