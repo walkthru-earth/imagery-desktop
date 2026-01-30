@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -58,6 +59,78 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// generateQuadkey generates a quadkey string for a tile at zoom level z covering a bbox
+// Uses the center tile as reference
+func generateQuadkey(south, west, north, east float64, zoom int) string {
+	centerLat := (south + north) / 2
+	centerLon := (west + east) / 2
+
+	// Convert to tile coordinates (Web Mercator)
+	n := math.Pow(2, float64(zoom))
+	x := int((centerLon + 180.0) / 360.0 * n)
+	y := int((1.0 - math.Log(math.Tan(centerLat*math.Pi/180.0)+1.0/math.Cos(centerLat*math.Pi/180.0))/math.Pi) / 2.0 * n)
+
+	// Generate quadkey from x, y, z
+	var quadkey strings.Builder
+	for i := zoom; i > 0; i-- {
+		digit := 0
+		mask := 1 << (i - 1)
+		if (x & mask) != 0 {
+			digit++
+		}
+		if (y & mask) != 0 {
+			digit += 2
+		}
+		quadkey.WriteByte(byte('0' + digit))
+	}
+	return quadkey.String()
+}
+
+// generateBBoxString creates a human-readable bbox string for filenames
+func generateBBoxString(south, west, north, east float64) string {
+	return fmt.Sprintf("%.4f_%.4f_%.4f_%.4f", south, west, north, east)
+}
+
+// sanitizeCoordinate formats a coordinate for use in filenames (removes minus sign, uses N/S/E/W)
+func sanitizeCoordinate(coord float64, isLat bool) string {
+	dir := "E"
+	if isLat {
+		if coord < 0 {
+			dir = "S"
+		} else {
+			dir = "N"
+		}
+	} else {
+		if coord < 0 {
+			dir = "W"
+		} else {
+			dir = "E"
+		}
+	}
+	return fmt.Sprintf("%.4f%s", math.Abs(coord), dir)
+}
+
+// generateGeoTIFFFilename creates a standardized GeoTIFF filename with metadata
+// Format: {source}_{date}_{quadkey}_z{zoom}_{bbox}.tif
+func generateGeoTIFFFilename(source, date string, bbox BoundingBox, zoom int) string {
+	quadkey := generateQuadkey(bbox.South, bbox.West, bbox.North, bbox.East, zoom)
+
+	// Short bbox representation for filename
+	bboxStr := fmt.Sprintf("%s-%s_%s-%s",
+		sanitizeCoordinate(bbox.South, true),
+		sanitizeCoordinate(bbox.North, true),
+		sanitizeCoordinate(bbox.West, false),
+		sanitizeCoordinate(bbox.East, false))
+
+	return fmt.Sprintf("%s_%s_%s_z%d_%s.tif", source, date, quadkey, zoom, bboxStr)
+}
+
+// generateTilesDirName creates a standardized tiles directory name
+// Format: {source}_{date}_z{zoom}_tiles
+func generateTilesDirName(source, date string, zoom int) string {
+	return fmt.Sprintf("%s_%s_z%d_tiles", source, date, zoom)
 }
 
 // BoundingBox represents a geographic bounding box
@@ -451,10 +524,10 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		outputImg = image.NewRGBA(image.Rect(0, 0, outputWidth, outputHeight))
 	}
 
-	// Create tiles directory if saving individual tiles
+	// Create tiles directory if saving individual tiles (OGC structure: source_date_z{zoom}_tiles/{z}/{x}/{y}.jpg)
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(a.downloadPath, fmt.Sprintf("esri_%s_z%d_tiles", date, zoom))
+		tilesDir = filepath.Join(a.downloadPath, generateTilesDirName("esri", date, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -486,11 +559,19 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 			continue
 		}
 
-		// Save individual tile if requested
+		// Save individual tile if requested (OGC structure: source/date/z/x/y.jpg)
 		if format == "tiles" || format == "both" {
-			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", result.tile.Column, result.tile.Row))
-			if err := os.WriteFile(tilePath, result.data, 0644); err != nil {
-				log.Printf("Failed to save tile: %v", err)
+			// Create esri/date/z/x subdirectories
+			sourceDir := filepath.Join(tilesDir, "esri", date)
+			zDir := filepath.Join(sourceDir, fmt.Sprintf("%d", zoom))
+			xDir := filepath.Join(zDir, fmt.Sprintf("%d", result.tile.Column))
+			if err := os.MkdirAll(xDir, 0755); err != nil {
+				log.Printf("Failed to create tile directories: %v", err)
+			} else {
+				tilePath := filepath.Join(xDir, fmt.Sprintf("%d.jpg", result.tile.Row))
+				if err := os.WriteFile(tilePath, result.data, 0644); err != nil {
+					log.Printf("Failed to save tile: %v", err)
+				}
 			}
 		}
 
@@ -531,8 +612,8 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		pixelWidth := (endX - originX) / float64(outputWidth)
 		pixelHeight := (originY - endY) / float64(outputHeight)
 
-		// Save as GeoTIFF with embedded projection (pure Go, no GDAL)
-		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("esri_%s_z%d.tif", date, zoom))
+		// Save as GeoTIFF with embedded projection and rich metadata
+		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("esri", date, bbox, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
@@ -542,7 +623,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 			Status:     "Encoding GeoTIFF file...",
 		})
 		a.emitLog("Encoding GeoTIFF file...")
-		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
+		if err := a.saveAsGeoTIFFWithMetadata(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight, "Esri Wayback", date); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
 		}
 
@@ -570,10 +651,14 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	return nil
 }
 
-// saveAsGeoTIFF saves an image as a georeferenced TIFF using world file and projection file
-// World files are universally supported and the most reliable georeferencing method
 // saveAsGeoTIFF saves an image as a georeferenced TIFF with embedded tags (EPSG:3857)
+// Includes proper geospatial metadata for GIS software compatibility
 func (a *App) saveAsGeoTIFF(img image.Image, outputPath string, originX, originY, pixelWidth, pixelHeight float64) error {
+	return a.saveAsGeoTIFFWithMetadata(img, outputPath, originX, originY, pixelWidth, pixelHeight, "", "")
+}
+
+// saveAsGeoTIFFWithMetadata saves an image as a georeferenced TIFF with full metadata
+func (a *App) saveAsGeoTIFFWithMetadata(img image.Image, outputPath string, originX, originY, pixelWidth, pixelHeight float64, source, date string) error {
 	// Create TIFF file
 	f, err := os.Create(outputPath)
 	if err != nil {
@@ -585,31 +670,56 @@ func (a *App) saveAsGeoTIFF(img image.Image, outputPath string, originX, originY
 	extraTags := make(map[uint16]interface{})
 
 	// Tag 34735: GeoKeyDirectoryTag (SHORT)
-	// Version=1, UPDATE=1, Minor=0, Keys=3
-	// 1024 (GTModelType) = 1 (Projected)
-	// 1025 (GTRasterType) = 1 (PixelIsArea)
-	// 3072 (ProjectedCSType) = 3857 (Web Mercator)
+	// Version=1, Revision=1, Minor=0, Keys=3
+	// 1024 (GTModelType) = 1 (Projected CRS)
+	// 1025 (GTRasterType) = 1 (PixelIsArea - pixel represents area, not point)
+	// 3072 (ProjectedCSType) = 3857 (WGS 84 / Pseudo-Mercator - EPSG:3857)
 	extraTags[geotiff.TagType_GeoKeyDirectoryTag] = []uint16{
 		1, 1, 0, 3,
-		1024, 0, 1, 1,
-		1025, 0, 1, 1,
-		3072, 0, 1, 3857,
+		1024, 0, 1, 1,    // GTModelTypeGeoKey: Projected
+		1025, 0, 1, 1,    // GTRasterTypeGeoKey: PixelIsArea
+		3072, 0, 1, 3857, // ProjectedCSTypeGeoKey: EPSG:3857
 	}
 
 	// Tag 33550: ModelPixelScaleTag (DOUBLE)
-	// ScaleX, ScaleY, ScaleZ (0)
-	// Note: ScaleY is positive magnitude. Standard GeoTIFF assumes Y increases upwards in model space
-	// but downwards in raster space, which Tiepoint handles or implied standard.
-	extraTags[geotiff.TagType_ModelPixelScaleTag] = []float64{pixelWidth, pixelHeight, 0.0}
+	// ScaleX, ScaleY, ScaleZ
+	// Pixel dimensions in the model space (meters for EPSG:3857)
+	// ScaleY is typically abs(pixelHeight) as it represents magnitude
+	scaleY := pixelHeight
+	if scaleY < 0 {
+		scaleY = -scaleY
+	}
+	extraTags[geotiff.TagType_ModelPixelScaleTag] = []float64{pixelWidth, scaleY, 0.0}
 
 	// Tag 33922: ModelTiepointTag (DOUBLE)
-	// I, J, K (Raster coords), X, Y, Z (Model coords)
-	// Map (0,0) pixel to (originX, originY)
+	// (I, J, K, X, Y, Z) - ties raster pixel (I,J,K) to model coordinates (X,Y,Z)
+	// Map pixel (0,0,0) to model coordinate (originX, originY, 0)
 	extraTags[geotiff.TagType_ModelTiepointTag] = []float64{0.0, 0.0, 0.0, originX, originY, 0.0}
 
-	// Encode as GeoTIFF
+	// Encode as GeoTIFF with metadata
 	if err := geotiff.Encode(f, img, extraTags); err != nil {
 		return fmt.Errorf("failed to encode GeoTIFF: %w", err)
+	}
+
+	// Also write a metadata sidecar file (.aux.xml) for complete metadata
+	if source != "" && date != "" {
+		auxPath := outputPath + ".aux.xml"
+		auxContent := fmt.Sprintf(`<PAMDataset>
+  <Metadata domain="IMAGE_STRUCTURE">
+    <MDI key="COMPRESSION">NONE</MDI>
+    <MDI key="INTERLEAVE">PIXEL</MDI>
+  </Metadata>
+  <Metadata domain="">
+    <MDI key="Source">%s</MDI>
+    <MDI key="Date">%s</MDI>
+    <MDI key="CRS">EPSG:3857</MDI>
+    <MDI key="Generated_By">WalkThru Earth Imagery Desktop v%s</MDI>
+  </Metadata>
+</PAMDataset>
+`, source, date, AppVersion)
+		if err := os.WriteFile(auxPath, []byte(auxContent), 0644); err != nil {
+			log.Printf("Warning: Failed to write metadata sidecar file: %v", err)
+		}
 	}
 
 	return nil
@@ -669,11 +779,11 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		outputImg = image.NewRGBA(image.Rect(0, 0, outputWidth, outputHeight))
 	}
 
-	// Create tiles directory if saving individual tiles
-	timestamp := time.Now().Format("20060102_150405")
+	// Create tiles directory if saving individual tiles (OGC structure)
+	timestamp := time.Now().Format("2006-01-02")
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d_tiles", timestamp, zoom))
+		tilesDir = filepath.Join(a.downloadPath, generateTilesDirName("ge", timestamp, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -704,11 +814,19 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 			continue
 		}
 
-		// Save individual tile if requested
+		// Save individual tile if requested (OGC structure: source/date/z/x/y.jpg)
 		if format == "tiles" || format == "both" {
-			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", tile.Column, tile.Row))
-			if err := os.WriteFile(tilePath, data, 0644); err != nil {
-				a.emitLog(fmt.Sprintf("Failed to save tile: %v", err))
+			// Create google_earth/current/z/x subdirectories
+			sourceDir := filepath.Join(tilesDir, "google_earth", timestamp)
+			zDir := filepath.Join(sourceDir, fmt.Sprintf("%d", zoom))
+			xDir := filepath.Join(zDir, fmt.Sprintf("%d", tile.Column))
+			if err := os.MkdirAll(xDir, 0755); err != nil {
+				log.Printf("Failed to create tile directories: %v", err)
+			} else {
+				tilePath := filepath.Join(xDir, fmt.Sprintf("%d.jpg", tile.Row))
+				if err := os.WriteFile(tilePath, data, 0644); err != nil {
+					log.Printf("Failed to save tile: %v", err)
+				}
 			}
 		}
 
@@ -734,6 +852,17 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 
 	a.emitLog(fmt.Sprintf("Processed %d/%d tiles", successCount, total))
 
+	// Check if we have enough tiles to create a meaningful GeoTIFF
+	minSuccessRate := 0.3 // Require at least 30% of tiles to succeed
+	if successCount == 0 {
+		return fmt.Errorf("failed to download any tiles - all attempts failed")
+	}
+	if float64(successCount)/float64(total) < minSuccessRate {
+		log.Printf("[GEDownload] Warning: Only %d/%d tiles (%.1f%%) downloaded successfully",
+			successCount, total, float64(successCount)/float64(total)*100)
+		a.emitLog(fmt.Sprintf("Warning: Only %d/%d tiles downloaded - GeoTIFF may have gaps", successCount, total))
+	}
+
 	// Track download completion
 	a.TrackEvent("download_complete", map[string]interface{}{
 		"source":  "google_earth",
@@ -754,8 +883,8 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		pixelWidth := (endX - originX) / float64(outputWidth)
 		pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 
-		// Save as GeoTIFF with embedded projection
-		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d.tif", timestamp, zoom))
+		// Save as GeoTIFF with embedded projection and rich metadata
+		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("ge", timestamp, bbox, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
@@ -765,7 +894,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 			Status:     "Encoding GeoTIFF file...",
 		})
 		a.emitLog("Encoding GeoTIFF file...")
-		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
+		if err := a.saveAsGeoTIFFWithMetadata(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight, "Google Earth", timestamp); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
 		}
 
@@ -1090,6 +1219,45 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Write(buf.Bytes())
+}
+
+// fetchHistoricalGETileWithZoomFallback attempts to fetch a historical tile with automatic zoom fallback
+// If the tile doesn't exist at the requested zoom, it tries lower zoom levels (z-1, z-2, etc.)
+// Returns the tile data and the zoom level that succeeded, or error if all attempts fail
+func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, hexDate string, maxFallbackLevels int) ([]byte, int, error) {
+	// Try the requested zoom first
+	data, err := a.fetchHistoricalGETile(tile, hexDate)
+	if err == nil {
+		return data, tile.Level, nil
+	}
+
+	// Log the initial failure
+	log.Printf("[ZoomFallback] Tile %s at zoom %d failed, trying fallback...", tile.Path, tile.Level)
+
+	// Try lower zoom levels
+	for fallbackLevel := 1; fallbackLevel <= maxFallbackLevels; fallbackLevel++ {
+		lowerZoom := tile.Level - fallbackLevel
+		if lowerZoom < 10 {
+			break // Don't go below zoom 10
+		}
+
+		// Create a tile at the lower zoom level covering the same geographic area
+		// Get the center of the original tile
+		lat, lon := tile.Center()
+		lowerTile, err := googleearth.GetTileForCoord(lat, lon, lowerZoom)
+		if err != nil {
+			continue
+		}
+
+		log.Printf("[ZoomFallback] Trying zoom %d (tile: %s)...", lowerZoom, lowerTile.Path)
+		data, err := a.fetchHistoricalGETile(lowerTile, hexDate)
+		if err == nil {
+			log.Printf("[ZoomFallback] SUCCESS at zoom %d", lowerZoom)
+			return data, lowerZoom, nil
+		}
+	}
+
+	return nil, 0, fmt.Errorf("tile not available at zoom %d or any fallback levels", tile.Level)
 }
 
 // fetchHistoricalGETile fetches a historical tile for the given GE tile coordinates and hexDate
@@ -1620,10 +1788,10 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		outputImg = image.NewRGBA(image.Rect(0, 0, outputWidth, outputHeight))
 	}
 
-	// Create tiles directory if saving individual tiles
+	// Create tiles directory if saving individual tiles (OGC structure)
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d_tiles", dateStr, zoom))
+		tilesDir = filepath.Join(a.downloadPath, generateTilesDirName("ge_historical", dateStr, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -1652,12 +1820,25 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 	for w := 0; w < numWorkers; w++ {
 		go func() {
 			for job := range tileChan {
-				data, err := a.fetchHistoricalGETile(job.tile, hexDate)
+				// Try with zoom fallback: up to 3 levels down for high zoom (z>=17), 6 levels for lower zoom
+				maxFallback := 3
+				if zoom < 17 {
+					maxFallback = 6
+				}
+
+				data, actualZoom, err := a.fetchHistoricalGETileWithZoomFallback(job.tile, hexDate, maxFallback)
 				if err != nil {
-					log.Printf("[GEHistorical] Failed to download tile %s: %v", job.tile.Path, err)
+					log.Printf("[GEHistorical] Failed to download tile %s (tried zoom %d to %d): %v",
+						job.tile.Path, zoom, max(zoom-maxFallback, 10), err)
 					resultChan <- tileResult{tile: job.tile, index: job.index, success: false}
 					continue
 				}
+
+				if actualZoom != zoom {
+					log.Printf("[GEHistorical] Tile %s downloaded from zoom %d (requested %d)",
+						job.tile.Path, actualZoom, zoom)
+				}
+
 				resultChan <- tileResult{tile: job.tile, data: data, index: job.index, success: true}
 			}
 		}()
@@ -1699,11 +1880,19 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 			continue
 		}
 
-		// Save individual tile if requested
+		// Save individual tile if requested (OGC structure: source/date/z/x/y.jpg)
 		if format == "tiles" || format == "both" {
-			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", result.tile.Column, result.tile.Row))
-			if err := os.WriteFile(tilePath, result.data, 0644); err != nil {
-				log.Printf("Failed to save tile: %v", err)
+			// Create google_earth_historical/date/z/x subdirectories
+			sourceDir := filepath.Join(tilesDir, "google_earth_historical", dateStr)
+			zDir := filepath.Join(sourceDir, fmt.Sprintf("%d", zoom))
+			xDir := filepath.Join(zDir, fmt.Sprintf("%d", result.tile.Column))
+			if err := os.MkdirAll(xDir, 0755); err != nil {
+				log.Printf("Failed to create tile directories: %v", err)
+			} else {
+				tilePath := filepath.Join(xDir, fmt.Sprintf("%d.jpg", result.tile.Row))
+				if err := os.WriteFile(tilePath, result.data, 0644); err != nil {
+					log.Printf("Failed to save tile: %v", err)
+				}
 			}
 		}
 
@@ -1727,6 +1916,28 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 
 	a.emitLog(fmt.Sprintf("Processed %d/%d tiles", successCount, total))
 
+	// Check if we have enough tiles to create a meaningful GeoTIFF
+	minSuccessRate := 0.3 // Require at least 30% of tiles to succeed
+	if successCount == 0 {
+		return fmt.Errorf("failed to download any tiles - all attempts failed at all zoom levels")
+	}
+	if float64(successCount)/float64(total) < minSuccessRate {
+		log.Printf("[GEHistorical] Warning: Only %d/%d tiles (%.1f%%) downloaded successfully",
+			successCount, total, float64(successCount)/float64(total)*100)
+		a.emitLog(fmt.Sprintf("Warning: Only %d/%d tiles downloaded - GeoTIFF may have gaps", successCount, total))
+	}
+
+	// Track download completion
+	a.TrackEvent("download_complete", map[string]interface{}{
+		"source":  "google_earth_historical",
+		"zoom":    zoom,
+		"total":   total,
+		"success": successCount,
+		"failed":  total - successCount,
+		"format":  format,
+		"date":    dateStr,
+	})
+
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
 		// Calculate georeferencing in Web Mercator (EPSG:3857)
@@ -1737,8 +1948,8 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		pixelWidth := (endX - originX) / float64(outputWidth)
 		pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 
-		// Save as GeoTIFF with embedded projection
-		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d.tif", dateStr, zoom))
+		// Save as GeoTIFF with embedded projection and rich metadata
+		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("ge_historical", dateStr, bbox, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
@@ -1748,7 +1959,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 			Status:     "Encoding GeoTIFF file...",
 		})
 		a.emitLog("Encoding GeoTIFF file...")
-		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
+		if err := a.saveAsGeoTIFFWithMetadata(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight, "Google Earth Historical", dateStr); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
 		}
 
