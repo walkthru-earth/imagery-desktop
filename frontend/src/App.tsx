@@ -357,14 +357,31 @@ function App() {
     const zoom = Math.round(currentMap.getZoom());
 
     if (mapState.source === "esri") {
+      // For Esri, include date range if multiple dates available
+      const dateRange = dates.length > 1
+        ? dates.map(d => ({ date: d.date }))
+        : undefined;
+
       return {
         bbox,
         zoom,
         source: "esri" as const,
         singleDate: currentDate.date,
+        dateRange,
       };
     } else {
       const geDate = currentDate as import("@/types").GEAvailableDate;
+
+      // For Google Earth, include date range if multiple dates available
+      const geDates = dates as import("@/types").GEAvailableDate[];
+      const dateRange = geDates.length > 1
+        ? geDates.map(d => ({
+            date: d.date,
+            hexDate: d.hexDate,
+            epoch: d.epoch,
+          }))
+        : undefined;
+
       return {
         bbox,
         zoom,
@@ -372,6 +389,7 @@ function App() {
         singleDate: geDate.date,
         singleHexDate: geDate.hexDate,
         singleEpoch: geDate.epoch,
+        dateRange,
       };
     }
   };
