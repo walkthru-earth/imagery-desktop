@@ -23,6 +23,7 @@ import (
 
 	"imagery-desktop/pkg/geotiff"
 
+	"github.com/posthog/posthog-go"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"imagery-desktop/internal/cache"
@@ -30,6 +31,12 @@ import (
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/imagery"
+)
+
+// Linker flags
+var (
+	PostHogKey  string
+	PostHogHost string
 )
 
 // ImagerySource represents the source of imagery
@@ -94,6 +101,7 @@ type App struct {
 	settings      *config.UserSettings
 	mu            sync.Mutex
 	devMode       bool // Enable verbose logging in dev mode only
+	phClient      posthog.Client
 }
 
 // NewApp creates a new App application struct
@@ -119,6 +127,20 @@ func NewApp() *App {
 	// Initialize unified downloader
 	downloader := imagery.NewTileDownloader(DownloadWorkers, tileCache)
 
+	// Initialize PostHog
+	var phClient posthog.Client
+	if PostHogKey != "" {
+		phConfig := posthog.Config{
+			Endpoint: PostHogHost,
+		}
+		client, err := posthog.NewWithConfig(PostHogKey, phConfig)
+		if err != nil {
+			log.Printf("Failed to initialize PostHog: %v", err)
+		} else {
+			phClient = client
+		}
+	}
+
 	return &App{
 		geClient:     googleearth.NewClient(),
 		esriClient:   esri.NewClient(),
@@ -126,6 +148,7 @@ func NewApp() *App {
 		downloader:   downloader,
 		downloadPath: settings.DownloadPath,
 		settings:     settings,
+		phClient:     phClient,
 	}
 }
 
@@ -155,6 +178,35 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start local tile server
 	go a.StartTileServer()
+
+	// Track app start
+	a.TrackEvent("app_started", map[string]interface{}{
+		"version": a.GetAppVersion(),
+		"os":      goruntime.GOOS,
+		"arch":    goruntime.GOARCH,
+	})
+}
+
+// TrackEvent sends an event to PostHog
+func (a *App) TrackEvent(event string, props map[string]interface{}) {
+	if a.phClient != nil {
+		// Use a distinct ID if possible, for now we use anonymous or machine ID if we had one
+		// For desktop apps without login, usually we might generate a UUID and store it in settings
+		// Falling back to "anonymous_backend" for now, or better:
+		// We could defer to frontend for user tracking, but backend tracking is useful for errors
+		a.phClient.Enqueue(posthog.Capture{
+			DistinctId: "backend_user", // Ideally should be unique per install
+			Event:      event,
+			Properties: props,
+		})
+	}
+}
+
+// Shutdown cleans up resources
+func (a *App) Shutdown(ctx context.Context) {
+	if a.phClient != nil {
+		a.phClient.Close()
+	}
 }
 
 // GetAppVersion returns the current application version
@@ -428,6 +480,8 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		})
 
 		if result.err != nil {
+			// Only log unique errors to avoid spam
+			// a.TrackEvent("tile_download_error", map[string]interface{}{"source": "esri", "error": result.err.Error()})
 			continue
 		}
 
@@ -457,6 +511,16 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	}
 
 	a.emitLog(fmt.Sprintf("Processed %d/%d tiles", successCount, total))
+
+	// Track download completion
+	a.TrackEvent("download_complete", map[string]interface{}{
+		"source":  "esri",
+		"zoom":    zoom,
+		"total":   total,
+		"success": successCount,
+		"failed":  total - successCount,
+		"format":  format,
+	})
 
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
@@ -634,7 +698,8 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		// Download tile
 		data, err := a.geClient.FetchTile(tile)
 		if err != nil {
-			log.Printf("[GEDownload] Failed to download tile %s: %v", tile.Path, err)
+			// Only log in dev mode
+			a.emitLog(fmt.Sprintf("[GEDownload] Failed to download tile %s: %v", tile.Path, err))
 			continue
 		}
 
@@ -642,7 +707,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		if format == "tiles" || format == "both" {
 			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", tile.Column, tile.Row))
 			if err := os.WriteFile(tilePath, data, 0644); err != nil {
-				log.Printf("Failed to save tile: %v", err)
+				a.emitLog(fmt.Sprintf("Failed to save tile: %v", err))
 			}
 		}
 
@@ -650,7 +715,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		if format == "geotiff" || format == "both" {
 			img, err := jpeg.Decode(bytes.NewReader(data))
 			if err != nil {
-				log.Printf("[GEDownload] Failed to decode tile %s: %v", tile.Path, err)
+				a.emitLog(fmt.Sprintf("[GEDownload] Failed to decode tile %s: %v", tile.Path, err))
 				continue
 			}
 
@@ -667,6 +732,16 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	}
 
 	a.emitLog(fmt.Sprintf("Processed %d/%d tiles", successCount, total))
+
+	// Track download completion
+	a.TrackEvent("download_complete", map[string]interface{}{
+		"source":  "google_earth",
+		"zoom":    zoom,
+		"total":   total,
+		"success": successCount,
+		"failed":  total - successCount,
+		"format":  format,
+	})
 
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {

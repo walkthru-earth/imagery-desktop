@@ -21,15 +21,15 @@ export function useMapInstance(
   // Initialize map
   useEffect(() => {
     if (!containerRef.current) {
-      console.log("[useMapInstance] No container ref yet");
+      // console.log("[useMapInstance] No container ref yet");
       return;
     }
     if (map) {
-      console.log("[useMapInstance] Map already exists");
+      // console.log("[useMapInstance] Map already exists");
       return;
     }
 
-    console.log("[useMapInstance] Initializing map with theme:", theme);
+    // console.log("[useMapInstance] Initializing map with theme:", theme);
     const mapInstance = new maplibregl.Map({
       container: containerRef.current,
       style: MAP_STYLES[theme],
@@ -38,25 +38,25 @@ export function useMapInstance(
     });
 
     // Add event listeners for debugging
-    mapInstance.on("load", () => console.log("[useMapInstance] Map load event"));
-    mapInstance.on("styledata", () => console.log("[useMapInstance] Map styledata event"));
-    mapInstance.on("movestart", () => console.log("[useMapInstance] Map movestart"));
-    mapInstance.on("move", () => console.log("[useMapInstance] Map move"));
+    // mapInstance.on("load", () => console.log("[useMapInstance] Map load event"));
+    // mapInstance.on("styledata", () => console.log("[useMapInstance] Map styledata event"));
+    // mapInstance.on("movestart", () => console.log("[useMapInstance] Map movestart"));
+    // mapInstance.on("move", () => console.log("[useMapInstance] Map move"));
     mapInstance.on("moveend", () => {
-      const center = mapInstance.getCenter();
-      const zoom = mapInstance.getZoom();
-      console.log("[useMapInstance] Map moveend - center:", center, "zoom:", zoom);
+      // const center = mapInstance.getCenter();
+      // const zoom = mapInstance.getZoom();
+      // console.log("[useMapInstance] Map moveend - center:", center, "zoom:", zoom);
     });
-    mapInstance.on("zoomstart", () => console.log("[useMapInstance] Map zoomstart"));
-    mapInstance.on("zoom", () => console.log("[useMapInstance] Map zoom"));
-    mapInstance.on("zoomend", () => console.log("[useMapInstance] Map zoomend"));
+    // mapInstance.on("zoomstart", () => console.log("[useMapInstance] Map zoomstart"));
+    // mapInstance.on("zoom", () => console.log("[useMapInstance] Map zoom"));
+    // mapInstance.on("zoomend", () => console.log("[useMapInstance] Map zoomend"));
 
     // Wait for style to load before making map available
     mapInstance.once("styledata", () => {
-      console.log("[useMapInstance] Initial style loaded, calling onStyleLoad");
+      // console.log("[useMapInstance] Initial style loaded, calling onStyleLoad");
       onStyleLoad?.();
       setMap(mapInstance);
-      console.log("[useMapInstance] Map instance set in state");
+      // console.log("[useMapInstance] Map instance set in state");
     });
 
     // Add navigation controls
@@ -67,7 +67,7 @@ export function useMapInstance(
 
     // Cleanup on unmount
     return () => {
-      console.log("[useMapInstance] Cleaning up map instance");
+      // console.log("[useMapInstance] Cleaning up map instance");
       mapInstance.remove();
       setMap(null);
     };
@@ -79,25 +79,25 @@ export function useMapInstance(
   // Update theme when it changes
   useEffect(() => {
     if (!map) {
-      console.log("[useMapInstance] Theme change but no map yet");
+      // console.log("[useMapInstance] Theme change but no map yet");
       return;
     }
 
     // Skip if theme hasn't changed (avoids wiping layers on init)
     if (currentThemeRef.current === theme) {
-      console.log("[useMapInstance] Theme matched current, skipping setStyle");
+      // console.log("[useMapInstance] Theme matched current, skipping setStyle");
       return;
     }
 
-    console.log("[useMapInstance] Updating map style to theme:", theme);
+    // console.log("[useMapInstance] Updating map style to theme:", theme);
     currentThemeRef.current = theme;
     map.setStyle(MAP_STYLES[theme]);
 
     // Notify when new style is loaded
     if (onStyleLoad) {
-      console.log("[useMapInstance] Setting up onStyleLoad callback for theme change");
+      // console.log("[useMapInstance] Setting up onStyleLoad callback for theme change");
       map.once("styledata", () => {
-        console.log("[useMapInstance] Style loaded after theme change");
+        // console.log("[useMapInstance] Style loaded after theme change");
         onStyleLoad();
       });
     }

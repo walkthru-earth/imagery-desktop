@@ -15,16 +15,16 @@ export function useImageryLayer(
   opacity: number = 1
 ) {
   useEffect(() => {
-    console.log("[useImageryLayer] Effect triggered:", {
-      hasMap: !!map,
-      source,
-      hasDate: !!date,
-      dateValue: date?.date,
-      opacity,
-    });
+    // console.log("[useImageryLayer] Effect triggered:", {
+    //   hasMap: !!map,
+    //   source,
+    //   hasDate: !!date,
+    //   dateValue: date?.date,
+    //   opacity,
+    // });
 
     if (!map || !date) {
-      console.log("[useImageryLayer] No map or date, removing layer");
+      // console.log("[useImageryLayer] No map or date, removing layer");
       // Remove layer if no date selected
       if (map) {
         if (map.getLayer("imagery-layer")) {
@@ -41,7 +41,7 @@ export function useImageryLayer(
     const sourceId = "imagery-source";
 
     const addLayer = async (retryCount = 0) => {
-      console.log("[useImageryLayer] Adding layer for date:", date.date, "Retry:", retryCount);
+      // console.log("[useImageryLayer] Adding layer for date:", date.date, "Retry:", retryCount);
 
       // Remove existing layer if this is the first attempt (or we are re-trying completely)
       if (retryCount === 0) {
@@ -55,7 +55,7 @@ export function useImageryLayer(
 
         if (source === "esri") {
           tileURL = await api.getEsriTileURL(date.date);
-          console.log("[useImageryLayer] Esri tile URL:", tileURL);
+          // console.log("[useImageryLayer] Esri tile URL:", tileURL);
         } else {
           // Google Earth historical
           const geDate = date as GEAvailableDate;
@@ -63,7 +63,7 @@ export function useImageryLayer(
             geDate.hexDate,
             geDate.epoch
           );
-          console.log("[useImageryLayer] GE tile URL:", tileURL);
+          // console.log("[useImageryLayer] GE tile URL:", tileURL);
         }
 
         // Check if map is still valid after async wait
@@ -108,13 +108,13 @@ export function useImageryLayer(
             beforeLayer
             );
         }
-        console.log("[useImageryLayer] Layer added successfully");
+        // console.log("[useImageryLayer] Layer added successfully");
       } catch (error) {
         console.error("[useImageryLayer] Error loading imagery layer:", error);
         
         // Retry logic (max 3 retries)
         if (retryCount < 3) {
-            console.log(`[useImageryLayer] Retrying in ${1000 * (retryCount + 1)}ms...`);
+            // console.log(`[useImageryLayer] Retrying in ${1000 * (retryCount + 1)}ms...`);
             setTimeout(() => addLayer(retryCount + 1), 1000 * (retryCount + 1));
         }
       }
@@ -125,7 +125,7 @@ export function useImageryLayer(
     // Re-add layer if style changes (e.g. theme switch) wipes it out
     const onStyleData = () => {
         if (map && map.getStyle() && !map.getSource(sourceId)) {
-            console.log("[useImageryLayer] Style changed, re-adding layer");
+            // console.log("[useImageryLayer] Style changed, re-adding layer");
             addLayer();
         }
     };

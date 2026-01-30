@@ -73,7 +73,7 @@ export function useGoogleEarthDates(
       return;
     }
 
-    console.log("[useGoogleEarthDates] Hook enabled, setting up listeners");
+    // console.log("[useGoogleEarthDates] Hook enabled, setting up listeners");
 
     // Create debounced version (500ms delay)
     // Reduce debounce to make UI snappier but keep it to prevent rapid API calls
@@ -97,11 +97,11 @@ export function useGoogleEarthDates(
     // causing an update loop with the imagery layer
     // map.on("idle", debouncedFetch); 
 
-    console.log("[useGoogleEarthDates] Added moveend listener");
+    // console.log("[useGoogleEarthDates] Added moveend listener");
 
     // Cleanup
     return () => {
-      console.log("[useGoogleEarthDates] Cleaning up listeners");
+      // console.log("[useGoogleEarthDates] Cleaning up listeners");
       map.off("moveend", debouncedFetch);
       // map.off("idle", debouncedFetch);
     };

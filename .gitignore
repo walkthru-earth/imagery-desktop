@@ -43,3 +43,4 @@ __pycache__/
 # Temporary Build Artifacts
 imagery-desktop
 CLAUDE.md
+.env.local
