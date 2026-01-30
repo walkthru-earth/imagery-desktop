@@ -70,7 +70,7 @@ jobs:
           echo "Injecting version $VERSION into wails.json"
           # Use jq to update the JSON file safely across platforms
           echo "Using jq to set productVersion to $VERSION"
-          jq --arg v "$VERSION" '.productVersion = $v' wails.json > wails.json.tmp && mv wails.json.tmp wails.json
+          jq --arg v "$VERSION" '.info.productVersion = $v' wails.json > wails.json.tmp && mv wails.json.tmp wails.json
 
       - name: Build
         shell: bash
