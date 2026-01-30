@@ -14,7 +14,7 @@ import {
 import { SourceSelector } from "./SourceSelector";
 
 // Single View - Center Timeline Control
-function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
+function SingleViewTimeline({ onExport }: { onExport?: (dateRange?: any[]) => void }) {
   const { state, dispatch } = useImageryContext();
   const mapState = state.maps.single;
   const dates = getAvailableDates(state, "single");
@@ -31,9 +31,9 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
       Math.max(rangeStart, rangeEnd) + 1
     );
     console.log("[MapControls] Exporting date range:", selectedDates);
-    // TODO: Open export dialog with date range
+    // Pass selected date range to export handler
     if (onExport) {
-      onExport();
+      onExport(selectedDates);
     }
   };
 
@@ -70,7 +70,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
             <Button
               size="default"
               variant="outline"
-              onClick={isRangeMode ? handleExportRange : onExport}
+              onClick={() => isRangeMode ? handleExportRange() : onExport()}
               title={isRangeMode ? "Export selected date range" : "Export current view"}
             >
               <Download className="h-5 w-5" />
@@ -217,7 +217,7 @@ export function MapControls({
   onExport,
 }: {
   className?: string;
-  onExport?: () => void;
+  onExport?: (dateRange?: any[]) => void;
 }) {
   const { state, dispatch } = useImageryContext();
 

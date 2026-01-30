@@ -44,6 +44,7 @@ function App() {
 
   // Export dialog state
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [selectedDateRange, setSelectedDateRange] = useState<any[] | null>(null);
 
   // Settings dialog state
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
@@ -321,8 +322,9 @@ function App() {
   // ===================
   // Export Handler
   // ===================
-  const handleExport = async () => {
-    console.log("Export triggered - opening export dialog");
+  const handleExport = async (dateRange?: any[]) => {
+    console.log("Export triggered - opening export dialog", { dateRange });
+    setSelectedDateRange(dateRange || null);
     setIsExportDialogOpen(true);
   };
 
@@ -357,9 +359,10 @@ function App() {
     const zoom = Math.round(currentMap.getZoom());
 
     if (mapState.source === "esri") {
-      // For Esri, include date range if multiple dates available
-      const dateRange = dates.length > 1
-        ? dates.map(d => ({ date: d.date }))
+      // Use selected date range if available, otherwise all dates
+      const datesToUse = selectedDateRange || dates;
+      const dateRange = datesToUse.length > 1
+        ? datesToUse.map(d => ({ date: d.date }))
         : undefined;
 
       return {
@@ -372,8 +375,8 @@ function App() {
     } else {
       const geDate = currentDate as import("@/types").GEAvailableDate;
 
-      // For Google Earth, include date range if multiple dates available
-      const geDates = dates as import("@/types").GEAvailableDate[];
+      // Use selected date range if available, otherwise all dates
+      const geDates = (selectedDateRange || dates) as import("@/types").GEAvailableDate[];
       const dateRange = geDates.length > 1
         ? geDates.map(d => ({
             date: d.date,
