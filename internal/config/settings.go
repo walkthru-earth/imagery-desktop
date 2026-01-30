@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 // CustomSource represents a user-added imagery source
@@ -102,28 +101,10 @@ func DefaultSettings() *UserSettings {
 
 // GetSettingsPath returns the OS-specific settings file path
 func GetSettingsPath() string {
-	var baseDir string
+	homeDir, _ := os.UserHomeDir()
 
-	switch runtime.GOOS {
-	case "darwin":
-		homeDir, _ := os.UserHomeDir()
-		baseDir = filepath.Join(homeDir, "Library", "Application Support", "imagery-desktop")
-	case "windows":
-		baseDir = os.Getenv("APPDATA")
-		if baseDir == "" {
-			homeDir, _ := os.UserHomeDir()
-			baseDir = filepath.Join(homeDir, "AppData", "Roaming")
-		}
-		baseDir = filepath.Join(baseDir, "imagery-desktop")
-	default: // Linux
-		homeDir, _ := os.UserHomeDir()
-		xdgConfig := os.Getenv("XDG_CONFIG_HOME")
-		if xdgConfig != "" {
-			baseDir = filepath.Join(xdgConfig, "imagery-desktop")
-		} else {
-			baseDir = filepath.Join(homeDir, ".config", "imagery-desktop")
-		}
-	}
+	// Use unified directory structure: ~/.walkthru-earth/imagery-desktop/settings/
+	baseDir := filepath.Join(homeDir, ".walkthru-earth", "imagery-desktop", "settings")
 
 	// Ensure directory exists
 	os.MkdirAll(baseDir, 0755)
