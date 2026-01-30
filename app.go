@@ -157,6 +157,11 @@ func (a *App) startup(ctx context.Context) {
 	go a.StartTileServer()
 }
 
+// GetAppVersion returns the current application version
+func (a *App) GetAppVersion() string {
+	return "0.1.0"
+}
+
 // GetTileInfo calculates tile information for a bounding box
 func (a *App) GetTileInfo(bbox BoundingBox, zoom int) TileInfo {
 	tiles, _ := esri.GetTilesInBounds(bbox.South, bbox.West, bbox.North, bbox.East, zoom)
@@ -1338,11 +1343,11 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 	// Sample multiple tiles across the viewport for better date coverage
 	// At high zoom levels (17-19), different tiles have different available dates
 	samplePoints := []struct{ lat, lon float64 }{
-		{(bbox.South + bbox.North) / 2, (bbox.West + bbox.East) / 2}, // Center
-		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25},   // NW quadrant
-		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25},   // NE quadrant
-		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25},   // SW quadrant
-		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25},   // SE quadrant
+		{(bbox.South + bbox.North) / 2, (bbox.West + bbox.East) / 2},                        // Center
+		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25}, // NW quadrant
+		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25}, // NE quadrant
+		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25}, // SW quadrant
+		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25}, // SE quadrant
 	}
 
 	// Collect dates from all sample tiles

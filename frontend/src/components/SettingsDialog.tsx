@@ -4,6 +4,8 @@ import { X, FolderOpen, Save, Plus, Trash2, Globe, FileCode } from "lucide-react
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/services/api";
+import { useTheme } from "@/components/ThemeProvider";
+import iconSvg from "@/assets/images/icon.svg";
 
 interface UserSettings {
   downloadPath: string;
@@ -44,10 +46,12 @@ export interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
+  const { theme, setTheme } = useTheme();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"general" | "sources" | "dates">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "sources" | "dates" | "about">("general");
+  const [appVersion, setAppVersion] = useState("...");
 
   // New custom source form
   const [showAddSource, setShowAddSource] = useState(false);
@@ -65,6 +69,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   useEffect(() => {
     if (isOpen) {
       loadSettings();
+      // Fetch app version
+      if ((window as any).go?.main?.App?.GetAppVersion) {
+        (window as any).go.main.App.GetAppVersion().then(setAppVersion);
+      }
     }
   }, [isOpen]);
 
@@ -200,7 +208,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <Card className="w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col">
-        <CardHeader className="flex flex-row items-center justify-between border-b flex-shrink-0">
+        <CardHeader className="flex flex-row items-center justify-between border-b shrink-0">
           <div>
             <h2 className="text-xl font-semibold">Settings</h2>
             <p className="text-sm text-muted-foreground mt-1">
@@ -213,7 +221,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
         </CardHeader>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-6 pt-4 border-b flex-shrink-0">
+        <div className="flex gap-1 px-6 pt-4 border-b shrink-0">
           <button
             onClick={() => setActiveTab("general")}
             className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
@@ -243,6 +251,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             }`}
           >
             Date Filters ({settings.dateFilterPatterns.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("about")}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              activeTab === "about"
+                ? "bg-background text-foreground border-t border-x"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            About
           </button>
         </div>
 
@@ -376,6 +394,56 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   </label>
                 </div>
               </div>
+
+              {/* Appearance */}
+              <div className="space-y-3 border-t pt-4">
+                <label className="text-sm font-medium">Appearance</label>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    onClick={() => {
+                      setTheme("light");
+                      if (settings) setSettings({ ...settings, theme: "light" });
+                    }}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-medium transition-all ${
+                      theme === "light"
+                        ? "border-primary bg-primary/5 text-primary ring-1 ring-primary"
+                        : "hover:bg-muted/50"
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full border bg-white" />
+                    Light
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTheme("dark");
+                      if (settings) setSettings({ ...settings, theme: "dark" });
+                    }}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-medium transition-all ${
+                      theme === "dark"
+                        ? "border-primary bg-primary/5 text-primary ring-1 ring-primary"
+                        : "hover:bg-muted/50"
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full border bg-slate-950" />
+                    Dark
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTheme("system");
+                      if (settings) setSettings({ ...settings, theme: "system" });
+                    }}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-medium transition-all ${
+                      theme === "system"
+                        ? "border-primary bg-primary/5 text-primary ring-1 ring-primary"
+                        : "hover:bg-muted/50"
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full border bg-linear-to-br from-white to-slate-950" />
+                    System
+                  </button>
+                </div>
+              </div>
+
             </>
           )}
 
@@ -620,10 +688,55 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
               </div>
             </>
           )}
+
+
+          {activeTab === "about" && (
+            <div className="flex flex-col items-center justify-center py-8 space-y-6 text-center">
+              <div className="w-24 h-24 p-4 bg-muted/30 rounded-2xl border flex items-center justify-center">
+                <img src={iconSvg} alt="Walkthru Earth" className="w-20 h-20" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold tracking-tight">Walkthru Earth</h3>
+                <p className="text-muted-foreground text-lg">Imagery Desktop</p>
+              </div>
+
+              <div className="py-2 px-4 rounded-full bg-muted border text-sm font-mono">
+                v{appVersion}
+              </div>
+
+              <div className="max-w-md text-sm text-muted-foreground leading-relaxed">
+                Advanced satellite imagery visualization and analysis tool. 
+                Seamlessly download and process imagery from multiple providers.
+              </div>
+
+              <div className="pt-6 border-t w-full max-w-sm">
+                <div className="flex justify-center gap-6 text-sm">
+                  <button 
+                    onClick={() => (window as any).runtime.BrowserOpenURL("mailto:hi@walkthru.earth")}
+                    className="text-primary hover:underline flex items-center gap-2 cursor-pointer bg-transparent border-0 p-0"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    hi@walkthru.earth
+                  </button>
+                  <span className="text-muted-foreground">|</span>
+                  <button 
+                    onClick={() => (window as any).runtime.BrowserOpenURL("https://walkthru.earth")}
+                    className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer bg-transparent border-0 p-0"
+                  >
+                    walkthru.earth
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-6">
+                  © {new Date().getFullYear()} Walkthru Earth. All rights reserved.
+                </p>
+              </div>
+            </div>
+          )}
         </CardContent>
 
         {/* Action Buttons */}
-        <div className="flex gap-3 border-t p-6 flex-shrink-0">
+        <div className="flex gap-3 border-t p-6 shrink-0">
           <Button onClick={onClose} variant="outline" className="flex-1" disabled={isSaving}>
             Cancel
           </Button>

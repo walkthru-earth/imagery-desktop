@@ -1,6 +1,5 @@
 import { Monitor, Grid2X2, Settings } from 'lucide-react';
-import logoImg from '@/assets/images/logo-universal.png';
-import { ThemeToggle } from '@/components/ThemeToggle';
+import logoImg from '@/assets/images/appicon.png';
 
 export type ViewMode = "single" | "split";
 
@@ -45,13 +44,12 @@ export function Header({
           className="h-9 w-auto"
         />
         <h1 className="text-xl font-semibold tracking-tight">
-          Walkthru Earth
+          Walkthru Earth - Imagery Desktop
         </h1>
       </div>
 
-      {/* Theme Toggle and Settings */}
+      {/* Settings */}
       <div className={onViewModeChange ? "flex items-center gap-2" : "ml-auto flex items-center gap-2"}>
-        <ThemeToggle />
         {onOpenSettings && (
           <button
             onClick={onOpenSettings}
