@@ -32,6 +32,7 @@ import (
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/imagery"
+	// "imagery-desktop/internal/video" // TODO: Uncomment when video export functions are added
 )
 
 // Linker flags
@@ -1992,6 +1993,33 @@ type GEDateInfo struct {
 	Date    string `json:"date"`
 	HexDate string `json:"hexDate"`
 	Epoch   int    `json:"epoch"`
+}
+
+// VideoExportOptions contains options for timelapse video export
+type VideoExportOptions struct {
+	// Dimensions
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Preset string `json:"preset"` // "instagram_square", "tiktok", "youtube", etc.
+
+	// Spotlight area (relative coordinates 0-1 in bbox)
+	SpotlightEnabled bool    `json:"spotlightEnabled"`
+	SpotlightCenterLat float64 `json:"spotlightCenterLat"`
+	SpotlightCenterLon float64 `json:"spotlightCenterLon"`
+	SpotlightRadiusKm  float64 `json:"spotlightRadiusKm"`
+
+	// Overlay
+	OverlayOpacity float64 `json:"overlayOpacity"` // 0.0 to 1.0
+
+	// Date overlay
+	ShowDateOverlay bool   `json:"showDateOverlay"`
+	DateFontSize    float64 `json:"dateFontSize"`
+	DatePosition    string `json:"datePosition"` // "top-left", "top-right", "bottom-left", "bottom-right"
+
+	// Video settings
+	FrameDelay   float64 `json:"frameDelay"`   // Seconds between frames
+	OutputFormat string `json:"outputFormat"` // "mp4", "gif"
+	Quality      int    `json:"quality"`      // 0-100
 }
 
 // DownloadGoogleEarthHistoricalImageryRange downloads multiple historical Google Earth imagery dates
