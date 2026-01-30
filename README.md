@@ -90,7 +90,15 @@ Project configuration is in `wails.json` (auto-generated on `wails init`).
 
 See [Wails documentation](https://wails.io/docs/reference/project-config) for all options.
 
-## 📚 Learn More
+## 📚 Documentation
+
+### Project Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete system architecture, workflows, and edge cases
+- **[GOOGLE_EARTH_API_NOTES.md](GOOGLE_EARTH_API_NOTES.md)** - Detailed API reference for Google Earth integration
+- **[AGENTS.md](AGENTS.md)** - Issue tracking workflow with beads (bd)
+
+### External Resources
 
 - [Wails Documentation](https://wails.io/docs/introduction)
 - [React Documentation](https://react.dev/)

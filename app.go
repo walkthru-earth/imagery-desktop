@@ -954,6 +954,16 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		return nil, fmt.Errorf("no dates available for tile")
 	}
 
+	// DEBUG: Log all available dates and their epochs for this tile
+	log.Printf("[DEBUG fetchHistoricalGETile] Tile %s has %d dates:", tile.Path, len(dates))
+	for i, dt := range dates {
+		if i < 5 { // Log first 5
+			log.Printf("[DEBUG fetchHistoricalGETile]   Date %s (hex: %s) -> epoch %d",
+				dt.Date.Format("2006-01-02"), dt.HexDate, dt.Epoch)
+		}
+	}
+	log.Printf("[DEBUG fetchHistoricalGETile] Looking for hexDate: %s", hexDate)
+
 	// Find the epoch for the requested hexDate
 	var epoch int
 	var foundHexDate string
@@ -963,6 +973,7 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 			epoch = dt.Epoch
 			foundHexDate = hexDate
 			found = true
+			log.Printf("[DEBUG fetchHistoricalGETile] EXACT MATCH found: hexDate %s -> epoch %d", hexDate, epoch)
 			break
 		}
 	}
@@ -987,10 +998,56 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 
 		epoch = dates[closestIdx].Epoch
 		foundHexDate = dates[closestIdx].HexDate
+		log.Printf("[DEBUG fetchHistoricalGETile] NO EXACT MATCH - using nearest: hexDate %s -> epoch %d (requested was %s)",
+			foundHexDate, epoch, hexDate)
 	}
 
-	// Fetch historical tile with the correct epoch and foundHexDate
-	return a.geClient.FetchHistoricalTile(tile, epoch, foundHexDate)
+	// Try fetching with the protobuf-reported epoch first
+	log.Printf("[DEBUG fetchHistoricalGETile] Attempting fetch: tile %s, epoch %d, hexDate %s", tile.Path, epoch, foundHexDate)
+	data, err := a.geClient.FetchHistoricalTile(tile, epoch, foundHexDate)
+	if err == nil {
+		log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS on first attempt with epoch %d", epoch)
+		return data, nil
+	}
+
+	// If the primary epoch fails (404), try with older epochs from the same tile
+	// This mimics Google Earth Pro's behavior which uses older, stable epochs
+	log.Printf("[DEBUG fetchHistoricalGETile] Primary epoch %d failed, trying fallback epochs...", epoch)
+
+	// Collect unique epochs from all dates, sorted by frequency (most common first)
+	epochCounts := make(map[int]int)
+	for _, dt := range dates {
+		epochCounts[dt.Epoch]++
+	}
+
+	// Sort epochs by frequency (descending)
+	type epochFreq struct {
+		epoch int
+		count int
+	}
+	var epochList []epochFreq
+	for ep, cnt := range epochCounts {
+		if ep != epoch { // Skip the one we already tried
+			epochList = append(epochList, epochFreq{ep, cnt})
+		}
+	}
+	sort.Slice(epochList, func(i, j int) bool {
+		return epochList[i].count > epochList[j].count
+	})
+
+	// Try epochs in order of frequency (most common = most likely to have tiles)
+	for _, ef := range epochList {
+		log.Printf("[DEBUG fetchHistoricalGETile] Trying fallback epoch %d (used by %d dates)...", ef.epoch, ef.count)
+		data, err := a.geClient.FetchHistoricalTile(tile, ef.epoch, foundHexDate)
+		if err == nil {
+			log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS with fallback epoch %d", ef.epoch)
+			return data, nil
+		}
+		log.Printf("[DEBUG fetchHistoricalGETile] Fallback epoch %d also failed", ef.epoch)
+	}
+
+	// All epochs failed
+	return nil, fmt.Errorf("tile not available with any known epoch (tried %d epochs)", len(epochList)+1)
 }
 
 // handleGoogleEarthHistoricalTile handles requests for historical Google Earth tiles
@@ -1040,19 +1097,24 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		// Find GE tiles at tryZoom that cover the same geographic area
 		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
 
+		log.Printf("[GEHistorical] z=%d x=%d y=%d: trying zoom %d, need %d tiles", z, x, y, tryZoom, len(requiredTiles))
+
 		for _, tc := range requiredTiles {
 			tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
 			if err != nil {
+				log.Printf("[GEHistorical] Failed to create tile from row=%d col=%d level=%d: %v", tc.Row, tc.Column, tc.Level, err)
 				continue
 			}
 
 			data, err := a.fetchHistoricalGETile(tile, hexDate)
 			if err != nil {
+				log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
 				continue
 			}
 
 			img, _, err := image.Decode(bytes.NewReader(data))
 			if err != nil {
+				log.Printf("[GEHistorical] Failed to decode tile %s: %v", tile.Path, err)
 				continue
 			}
 
@@ -1060,10 +1122,13 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 			geTiles[key] = img
 		}
 
+		log.Printf("[GEHistorical] z=%d x=%d y=%d: zoom %d got %d/%d tiles", z, x, y, tryZoom, len(geTiles), len(requiredTiles))
+
 		if len(geTiles) > 0 {
 			sourceZoom = tryZoom
 			if tryZoom < z {
-				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d", z, x, y, hexDate, tryZoom)
+				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d (got %d/%d tiles at original zoom)",
+					z, x, y, hexDate, tryZoom, len(geTiles), len(requiredTiles))
 			}
 		}
 	}
@@ -1131,6 +1196,16 @@ type GEAvailableDate struct {
 func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvailableDate, error) {
 	a.emitLog(fmt.Sprintf("Fetching Google Earth historical dates for zoom %d...", zoom))
 
+	// IMPORTANT: Sample at zoom 16 to get stable, reliable epoch values
+	// At zoom 17-19, the protobuf reports newer epochs (like 359) that don't have actual tiles
+	// Zoom 16 provides epochs (like 358) that work across ALL zoom levels including 17-19
+	// This is critical for 2025+ dates where high zoom epochs in protobuf are incorrect
+	sampleZoom := 16
+	if zoom < 16 {
+		sampleZoom = zoom // Use requested zoom if it's lower than 16
+	}
+	log.Printf("[GEDates] Sampling at zoom %d for epoch stability (requested zoom: %d)", sampleZoom, zoom)
+
 	// Sample multiple tiles across the viewport for better date coverage
 	// At high zoom levels (17-19), different tiles have different available dates
 	samplePoints := []struct{ lat, lon float64 }{
@@ -1146,13 +1221,13 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 	tileSampleCount := 0
 
 	for i, point := range samplePoints {
-		tile, err := googleearth.GetTileForCoord(point.lat, point.lon, zoom)
+		tile, err := googleearth.GetTileForCoord(point.lat, point.lon, sampleZoom)
 		if err != nil {
 			log.Printf("[GEDates] Failed to get tile %d: %v", i, err)
 			continue
 		}
 
-		log.Printf("[GEDates] Sampling tile %d/%d: %s at zoom %d", i+1, len(samplePoints), tile.Path, zoom)
+		log.Printf("[GEDates] Sampling tile %d/%d: %s at zoom %d", i+1, len(samplePoints), tile.Path, sampleZoom)
 
 		datedTiles, err := a.geClient.GetAvailableDates(tile)
 		if err != nil {
@@ -1192,15 +1267,35 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 
 	for hexDate, tilesWithDate := range allDatesMap {
 		if len(tilesWithDate) >= minTileCount {
-			// Use the date info from any tile (they should be the same date, just possibly different epochs)
+			// Find the most common epoch for this date across all tiles
+			// Different tiles may report different epochs for the same date
+			epochCounts := make(map[int]int)
+			var sampleDateInfo GEAvailableDate
+
 			for _, dateInfo := range tilesWithDate {
-				if !seen[dateInfo.Date] {
-					seen[dateInfo.Date] = true
-					dates = append(dates, dateInfo)
-					log.Printf("[GEDates] Date %s (hex: %s) available in %d/%d tiles",
-						dateInfo.Date, hexDate, len(tilesWithDate), tileSampleCount)
+				epochCounts[dateInfo.Epoch]++
+				sampleDateInfo = dateInfo // Keep one for the date string
+			}
+
+			// Use the most frequently occurring epoch
+			bestEpoch := sampleDateInfo.Epoch
+			maxCount := 0
+			for epoch, count := range epochCounts {
+				if count > maxCount {
+					maxCount = count
+					bestEpoch = epoch
 				}
-				break
+			}
+
+			if !seen[sampleDateInfo.Date] {
+				seen[sampleDateInfo.Date] = true
+				dates = append(dates, GEAvailableDate{
+					Date:    sampleDateInfo.Date,
+					Epoch:   bestEpoch, // Use most common epoch
+					HexDate: hexDate,
+				})
+				log.Printf("[GEDates] Date %s (hex: %s, epoch: %d) available in %d/%d tiles (epoch used by %d tiles)",
+					sampleDateInfo.Date, hexDate, bestEpoch, len(tilesWithDate), tileSampleCount, maxCount)
 			}
 		}
 	}
@@ -1209,14 +1304,33 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 		a.emitLog("No common dates found across sampled tiles - showing all available dates")
 		// Fallback: show all dates if filtering is too strict
 		for hexDate, tilesWithDate := range allDatesMap {
+			// Find most common epoch even in fallback
+			epochCounts := make(map[int]int)
+			var sampleDateInfo GEAvailableDate
+
 			for _, dateInfo := range tilesWithDate {
-				if !seen[dateInfo.Date] {
-					seen[dateInfo.Date] = true
-					dates = append(dates, dateInfo)
-					log.Printf("[GEDates] Fallback: Date %s (hex: %s) from %d tiles",
-						dateInfo.Date, hexDate, len(tilesWithDate))
+				epochCounts[dateInfo.Epoch]++
+				sampleDateInfo = dateInfo
+			}
+
+			bestEpoch := sampleDateInfo.Epoch
+			maxCount := 0
+			for epoch, count := range epochCounts {
+				if count > maxCount {
+					maxCount = count
+					bestEpoch = epoch
 				}
-				break
+			}
+
+			if !seen[sampleDateInfo.Date] {
+				seen[sampleDateInfo.Date] = true
+				dates = append(dates, GEAvailableDate{
+					Date:    sampleDateInfo.Date,
+					Epoch:   bestEpoch,
+					HexDate: hexDate,
+				})
+				log.Printf("[GEDates] Fallback: Date %s (hex: %s, epoch: %d) from %d tiles",
+					sampleDateInfo.Date, hexDate, bestEpoch, len(tilesWithDate))
 			}
 		}
 	}
@@ -1226,7 +1340,7 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 		return dates[i].Date > dates[j].Date
 	})
 
-	a.emitLog(fmt.Sprintf("Found %d dates available across viewport at zoom %d", len(dates), zoom))
+	a.emitLog(fmt.Sprintf("Found %d dates available across viewport (sampled at zoom %d, requested zoom %d)", len(dates), sampleZoom, zoom))
 	return dates, nil
 }
 

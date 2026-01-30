@@ -31,7 +31,15 @@ pnpm-lock.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# Debug & Test Files
 dbroot.dat
-gee.har
+*.har
+tile_test_results.json
+test_*.py
+*.pyc
+__pycache__/
+
+# Temporary Build Artifacts
 imagery-desktop
-requestly_logs.har
+CLAUDE.md

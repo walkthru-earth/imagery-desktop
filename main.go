@@ -2,7 +2,9 @@ package main
 
 import (
 	"embed"
+	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -21,6 +23,37 @@ func isDevMode() bool {
 }
 
 func main() {
+	// Setup log file in user home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal("Failed to get user home directory:", err)
+	}
+
+	// Create app-specific hidden directory: ~/.imagery-desktop (cross-platform)
+	appDir := filepath.Join(homeDir, ".imagery-desktop")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		log.Fatal("Failed to create app directory:", err)
+	}
+
+	// Create log file in app directory
+	logPath := filepath.Join(appDir, "debug.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatal("Failed to open log file:", err)
+	}
+	defer logFile.Close()
+
+	// Set log output to file with flags for timestamp and file location
+	log.SetOutput(logFile)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	log.Println("=== Imagery Desktop Started ===")
+	log.Printf("App directory: %s", appDir)
+	log.Printf("Log file: %s", logPath)
+
+	// Also print to console for user awareness
+	println("Debug logs:", logPath)
+
 	// Create an instance of the app structure
 	app := NewApp()
 
@@ -29,7 +62,7 @@ func main() {
 	app.devMode = os.Getenv("DEV_MODE") == "1" || isDevMode()
 
 	// Create application with options
-	err := wails.Run(&options.App{
+	if err := wails.Run(&options.App{
 		Title:  "Imagery Desktop",
 		Width:  1024,
 		Height: 768,
@@ -41,9 +74,7 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-	})
-
-	if err != nil {
-		println("Error:", err.Error())
+	}); err != nil {
+		log.Fatal("Error starting application:", err)
 	}
 }
