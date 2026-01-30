@@ -83,7 +83,7 @@ export function useImageryLayer(
             attribution:
                 source === "esri"
                 ? "&copy; Esri World Imagery Wayback"
-                : "Google Earth",
+                : "&copy; Google Earth",
             });
         }
 

@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, RefObject } from "react";
 import maplibregl from "maplibre-gl";
+import iconUrl from "@/assets/images/icon.svg";
+import { BrowserOpenURL } from "../../wailsjs/runtime";
 
 // Map styles for light and dark mode (CartoDB vector tiles)
 const MAP_STYLES = {
@@ -35,28 +37,35 @@ export function useMapInstance(
       style: MAP_STYLES[theme],
       center: [31.2357, 30.0444], // Cairo, Egypt
       zoom: 10,
+      // @ts-ignore - preserveDrawingBuffer is valid WebGL context option
+      preserveDrawingBuffer: true, // Required for canvas recording/screenshots
+      attributionControl: false, // We will add a custom one below
     });
 
-    // Add event listeners for debugging
-    // mapInstance.on("load", () => console.log("[useMapInstance] Map load event"));
-    // mapInstance.on("styledata", () => console.log("[useMapInstance] Map styledata event"));
-    // mapInstance.on("movestart", () => console.log("[useMapInstance] Map movestart"));
-    // mapInstance.on("move", () => console.log("[useMapInstance] Map move"));
-    mapInstance.on("moveend", () => {
-      // const center = mapInstance.getCenter();
-      // const zoom = mapInstance.getZoom();
-      // console.log("[useMapInstance] Map moveend - center:", center, "zoom:", zoom);
-    });
-    // mapInstance.on("zoomstart", () => console.log("[useMapInstance] Map zoomstart"));
-    // mapInstance.on("zoom", () => console.log("[useMapInstance] Map zoom"));
-    // mapInstance.on("zoomend", () => console.log("[useMapInstance] Map zoomend"));
+    // Add custom attribution with logo and static credits
+    // "Always add google and esri and walkthru.earth"
+    // Use span with inline-flex to ensure it stays on the same line as other attributions
+    const attributionHtml = `
+      <span style="display: inline-flex; align-items: center; gap: 4px;">
+        <a href="https://walkthru.earth" target="_blank" style="display: flex; align-items: center; gap: 4px; text-decoration: none; color: inherit;">
+          <img src="${iconUrl}" alt="" style="height: 14px; width: 14px;" />
+          <span class="font-semibold">Walkthru.earth</span>
+        </a>
+      </span>
+    `;
+
+    mapInstance.addControl(
+      new maplibregl.AttributionControl({
+        compact: false, // Expand by default to show branding
+        customAttribution: attributionHtml,
+      }),
+      "bottom-right"
+    );
 
     // Wait for style to load before making map available
     mapInstance.once("styledata", () => {
-      // console.log("[useMapInstance] Initial style loaded, calling onStyleLoad");
       onStyleLoad?.();
       setMap(mapInstance);
-      // console.log("[useMapInstance] Map instance set in state");
     });
 
     // Add navigation controls
@@ -65,9 +74,29 @@ export function useMapInstance(
       "bottom-right"
     );
 
+    // Intercept attribution link clicks to open in system browser
+    const handleLinkClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Use closest to find the anchor if user clicks image or span inside
+      const link = target.closest("a");
+      // Check if it's the walkthru link (or any external link we want to handle)
+      if (link && link.href && link.href.includes("walkthru.earth")) {
+        e.preventDefault();
+        BrowserOpenURL(link.href);
+      }
+    };
+    
+    // Attach listener to container (MapLibre puts controls inside container)
+    // Note: use capture phase to ensure we catch it before MapLibre potentially handles it
+    const container = containerRef.current;
+    container.addEventListener("click", handleLinkClick);
+
     // Cleanup on unmount
     return () => {
       // console.log("[useMapInstance] Cleaning up map instance");
+      if (container) {
+        container.removeEventListener("click", handleLinkClick);
+      }
       mapInstance.remove();
       setMap(null);
     };

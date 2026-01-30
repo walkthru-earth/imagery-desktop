@@ -142,10 +142,28 @@
   }
 }
 
-/* MapLibre specific styles */
+  /* MapLibre specific styles */
 .maplibregl-map {
   width: 100%;
   height: 100%;
+}
+
+/* Force attribution to single line */
+.maplibregl-ctrl-attrib {
+  display: inline-flex !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+  max-width: none !important;
+  background-color: hsla(0, 0%, 100%, 0.8) !important;
+  border-radius: 9999px !important;
+  padding: 0 8px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  display: inline-flex !important;
+  align-items: center !important;
+  color: inherit !important;
+  text-decoration: none !important;
 }
 
 html, body, #root {

@@ -35,7 +35,7 @@ const RTL_PLUGIN_URL =
   "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js";
 
 function App() {
-  const { theme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { state, dispatch } = useImageryContext();
 
   // Download progress
@@ -89,6 +89,10 @@ function App() {
       if ((window as any).go?.main?.App?.GetSettings) {
         const s = await (window as any).go.main.App.GetSettings();
         setSettings(s);
+        // Sync theme from backend settings
+        if (s.theme) {
+          setTheme(s.theme);
+        }
       }
     } catch (err) {
       console.error("Failed to load settings:", err);

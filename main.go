@@ -29,14 +29,15 @@ func main() {
 		log.Fatal("Failed to get user home directory:", err)
 	}
 
-	// Create app-specific hidden directory: ~/.imagery-desktop (cross-platform)
-	appDir := filepath.Join(homeDir, ".imagery-desktop")
-	if err := os.MkdirAll(appDir, 0755); err != nil {
+	// Create app-specific hidden directory: ~/.walkthru-earth/imagery-desktop (cross-platform)
+	appDir := filepath.Join(homeDir, ".walkthru-earth", "imagery-desktop")
+	logsDir := filepath.Join(appDir, "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
 		log.Fatal("Failed to create app directory:", err)
 	}
 
 	// Create log file in app directory
-	logPath := filepath.Join(appDir, "debug.log")
+	logPath := filepath.Join(logsDir, "debug.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		log.Fatal("Failed to open log file:", err)
@@ -48,6 +49,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	log.Println("=== Imagery Desktop Started ===")
+	log.Printf("App Version: %s", AppVersion)
 	log.Printf("App directory: %s", appDir)
 	log.Printf("Log file: %s", logPath)
 
@@ -64,8 +66,8 @@ func main() {
 	// Create application with options
 	if err := wails.Run(&options.App{
 		Title:  "Imagery Desktop",
-		Width:  1024,
-		Height: 768,
+		Width:  1280,
+		Height: 800,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
