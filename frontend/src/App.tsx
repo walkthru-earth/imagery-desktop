@@ -21,6 +21,8 @@ import { MapControls } from "@/components/Map/MapControls";
 import { MapCompare } from "@/components/Map/MapCompare";
 import { ExportDialog } from "@/components/ExportDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { TileGridOverlay } from "@/components/Map/TileGridOverlay";
+import { CoordinatesOverlay } from "@/components/Map/CoordinatesOverlay";
 import { useTheme } from "@/components/ThemeProvider";
 
 // API & Types
@@ -79,10 +81,27 @@ function App() {
   const leftMapRef = useRef<HTMLDivElement>(null);
   const rightMapRef = useRef<HTMLDivElement>(null);
 
+  // Settings state
+  const [settings, setSettings] = useState<any>(null);
+
+  const loadSettings = async () => {
+    try {
+      if ((window as any).go?.main?.App?.GetSettings) {
+        const s = await (window as any).go.main.App.GetSettings();
+        setSettings(s);
+      }
+    } catch (err) {
+      console.error("Failed to load settings:", err);
+    }
+  };
+
   // ===================
   // Initialization
   // ===================
   useEffect(() => {
+    // Load settings
+    loadSettings();
+
     // RTL Plugin
     if (maplibregl.getRTLTextPluginStatus() === "unavailable") {
       maplibregl.setRTLTextPlugin(RTL_PLUGIN_URL, true);
@@ -93,6 +112,8 @@ function App() {
       console.error("Failed to start tile server:", error);
     });
   }, []);
+
+
 
   // ===================
   // Map Instances
@@ -216,6 +237,8 @@ function App() {
     getCurrentDate(state, "right"),
     state.layers.imagery.opacity
   );
+
+
 
   // ===================
   // Bbox Layer (Single View)
@@ -452,11 +475,26 @@ function App() {
         {/* Settings Dialog */}
         <SettingsDialog
           isOpen={isSettingsDialogOpen}
-          onClose={() => setIsSettingsDialogOpen(false)}
+          onClose={() => {
+            setIsSettingsDialogOpen(false);
+            // Refresh settings when dialog closes
+            loadSettings();
+          }}
         />
+
+        {/* Coordinates Overlay */}
+        {settings?.showCoordinates && (
+          <CoordinatesOverlay maps={[singleMap, leftMap, rightMap]} />
+        )}
+
+        {/* Tile Grid Overlays */}
+        <TileGridOverlay map={singleMap} visible={settings?.showTileGrid ?? false} />
+        <TileGridOverlay map={leftMap} visible={settings?.showTileGrid ?? false} />
+        <TileGridOverlay map={rightMap} visible={settings?.showTileGrid ?? false} />
       </div>
     </MainLayout>
   );
 }
 
 export default App;
+

@@ -38,8 +38,8 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
   };
 
   return (
-    <Card className="bg-background/95 backdrop-blur-lg">
-      <CardContent className="p-5 space-y-2.5">
+    <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
+      <CardContent className="p-3 space-y-2">
         {/* Source Selector and Export */}
         <div className="flex gap-2 items-center">
           <SourceSelector
@@ -85,7 +85,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
 
         {/* Date Slider */}
         {dates.length > 0 && (
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             {isRangeMode ? (
               <>
                 {/* Range Mode - Single Dual-Thumb Slider */}
@@ -197,7 +197,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
                   }}
                   className="w-full"
                 />
-                <div className="flex justify-between text-sm text-muted-foreground">
+                <div className="flex justify-between text-xs text-muted-foreground px-1">
                   <span>{dates[0]?.date}</span>
                   <span>{dates[dates.length - 1]?.date}</span>
                 </div>

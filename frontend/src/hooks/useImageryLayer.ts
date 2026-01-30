@@ -87,8 +87,14 @@ export function useImageryLayer(
               : "Google Earth",
         });
 
-        // Add layer (before bbox-fill if it exists)
-        const beforeLayer = map.getLayer("bbox-fill") ? "bbox-fill" : undefined;
+        // Add layer (before bbox-fill or custom grid if they exist)
+        let beforeLayer = undefined;
+        if (map.getLayer("custom-tile-grid-lines")) {
+            beforeLayer = "custom-tile-grid-lines";
+        } else if (map.getLayer("bbox-fill")) {
+            beforeLayer = "bbox-fill";
+        }
+
         console.log("[useImageryLayer] Adding raster layer, beforeLayer:", beforeLayer);
         map.addLayer(
           {
