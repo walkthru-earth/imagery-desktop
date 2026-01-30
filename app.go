@@ -1110,40 +1110,99 @@ type GEAvailableDate struct {
 }
 
 // GetGoogleEarthDatesForArea returns available historical imagery dates for a specific area
+// This samples multiple tiles across the viewport to ensure returned dates are available
+// at the current zoom level and location - critical for zoom levels 17-19 where date
+// availability varies significantly between tiles
 func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvailableDate, error) {
-	a.emitLog("Fetching Google Earth historical dates...")
+	a.emitLog(fmt.Sprintf("Fetching Google Earth historical dates for zoom %d...", zoom))
 
-	// Get center tile
-	centerLat := (bbox.South + bbox.North) / 2
-	centerLon := (bbox.West + bbox.East) / 2
-
-	tile, err := googleearth.GetTileForCoord(centerLat, centerLon, zoom)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tile for coordinates: %w", err)
+	// Sample multiple tiles across the viewport for better date coverage
+	// At high zoom levels (17-19), different tiles have different available dates
+	samplePoints := []struct{ lat, lon float64 }{
+		{(bbox.South + bbox.North) / 2, (bbox.West + bbox.East) / 2}, // Center
+		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25},   // NW quadrant
+		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25},   // NE quadrant
+		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25},   // SW quadrant
+		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25},   // SE quadrant
 	}
 
-	a.emitLog(fmt.Sprintf("Querying tile %s at zoom %d", tile.Path, zoom))
+	// Collect dates from all sample tiles
+	allDatesMap := make(map[string]map[string]GEAvailableDate) // hexDate -> tileID -> date info
+	tileSampleCount := 0
 
-	// Get available dates from TimeMachine
-	datedTiles, err := a.geClient.GetAvailableDates(tile)
-	if err != nil {
-		a.emitLog(fmt.Sprintf("Error getting dates: %v", err))
-		return nil, err
+	for i, point := range samplePoints {
+		tile, err := googleearth.GetTileForCoord(point.lat, point.lon, zoom)
+		if err != nil {
+			log.Printf("[GEDates] Failed to get tile %d: %v", i, err)
+			continue
+		}
+
+		log.Printf("[GEDates] Sampling tile %d/%d: %s at zoom %d", i+1, len(samplePoints), tile.Path, zoom)
+
+		datedTiles, err := a.geClient.GetAvailableDates(tile)
+		if err != nil {
+			log.Printf("[GEDates] Failed to get dates for tile %s: %v", tile.Path, err)
+			continue
+		}
+
+		tileSampleCount++
+		tileID := tile.Path
+
+		// Add this tile's dates to the map
+		for _, dt := range datedTiles {
+			if allDatesMap[dt.HexDate] == nil {
+				allDatesMap[dt.HexDate] = make(map[string]GEAvailableDate)
+			}
+			allDatesMap[dt.HexDate][tileID] = GEAvailableDate{
+				Date:    dt.Date.Format("2006-01-02"),
+				Epoch:   dt.Epoch,
+				HexDate: dt.HexDate,
+			}
+		}
 	}
 
-	// Convert to response format
+	if tileSampleCount == 0 {
+		return nil, fmt.Errorf("failed to sample any tiles in the area")
+	}
+
+	// Filter to dates that appear in at least 60% of sampled tiles
+	// This ensures good coverage while allowing for some tile variation
+	minTileCount := int(float64(tileSampleCount) * 0.6)
+	if minTileCount < 1 {
+		minTileCount = 1
+	}
+
 	var dates []GEAvailableDate
 	seen := make(map[string]bool)
 
-	for _, dt := range datedTiles {
-		dateStr := dt.Date.Format("2006-01-02")
-		if !seen[dateStr] {
-			seen[dateStr] = true
-			dates = append(dates, GEAvailableDate{
-				Date:    dateStr,
-				Epoch:   dt.Epoch,
-				HexDate: dt.HexDate,
-			})
+	for hexDate, tilesWithDate := range allDatesMap {
+		if len(tilesWithDate) >= minTileCount {
+			// Use the date info from any tile (they should be the same date, just possibly different epochs)
+			for _, dateInfo := range tilesWithDate {
+				if !seen[dateInfo.Date] {
+					seen[dateInfo.Date] = true
+					dates = append(dates, dateInfo)
+					log.Printf("[GEDates] Date %s (hex: %s) available in %d/%d tiles",
+						dateInfo.Date, hexDate, len(tilesWithDate), tileSampleCount)
+				}
+				break
+			}
+		}
+	}
+
+	if len(dates) == 0 {
+		a.emitLog("No common dates found across sampled tiles - showing all available dates")
+		// Fallback: show all dates if filtering is too strict
+		for hexDate, tilesWithDate := range allDatesMap {
+			for _, dateInfo := range tilesWithDate {
+				if !seen[dateInfo.Date] {
+					seen[dateInfo.Date] = true
+					dates = append(dates, dateInfo)
+					log.Printf("[GEDates] Fallback: Date %s (hex: %s) from %d tiles",
+						dateInfo.Date, hexDate, len(tilesWithDate))
+				}
+				break
+			}
 		}
 	}
 
@@ -1152,7 +1211,7 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 		return dates[i].Date > dates[j].Date
 	})
 
-	a.emitLog(fmt.Sprintf("Found %d unique dates", len(dates)))
+	a.emitLog(fmt.Sprintf("Found %d dates available across viewport at zoom %d", len(dates), zoom))
 	return dates, nil
 }
 
