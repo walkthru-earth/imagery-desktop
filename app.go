@@ -79,6 +79,7 @@ type App struct {
 	downloadPath  string
 	tileServerURL string
 	mu            sync.Mutex
+	devMode       bool // Enable verbose logging in dev mode only
 }
 
 // NewApp creates a new App application struct
@@ -234,9 +235,11 @@ func (a *App) SelectDownloadFolder() (string, error) {
 	return path, nil
 }
 
-// emitLog sends a log message to the frontend
+// emitLog sends a log message to the frontend (only in dev mode)
 func (a *App) emitLog(message string) {
-	wailsRuntime.EventsEmit(a.ctx, "log", message)
+	if a.devMode {
+		wailsRuntime.EventsEmit(a.ctx, "log", message)
+	}
 }
 
 // findLayerForDate finds the layer matching a date
@@ -370,13 +373,19 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	for result := range resultChan {
 		count := atomic.AddInt64(&downloaded, 1)
 
-		// Emit progress
+		// Emit progress with clear status based on format
 		percent := int((count * 100) / int64(total))
+		var status string
+		if format == "geotiff" || format == "both" {
+			status = fmt.Sprintf("Downloading and merging %d/%d tiles", count, total)
+		} else {
+			status = fmt.Sprintf("Downloading %d/%d tiles", count, total)
+		}
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: int(count),
 			Total:      total,
 			Percent:    percent,
-			Status:     fmt.Sprintf("Downloaded %d/%d tiles", count, total),
+			Status:     status,
 		})
 
 		if result.err != nil {
@@ -421,14 +430,14 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		// Save as GeoTIFF with embedded projection (pure Go, no GDAL)
 		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("esri_%s_z%d.tif", date, zoom))
 
-		// Emit progress for GeoTIFF conversion phase
+		// Emit progress for GeoTIFF encoding phase
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: total,
 			Total:      total,
 			Percent:    99,
-			Status:     "Converting to GeoTIFF...",
+			Status:     "Encoding GeoTIFF file...",
 		})
-		a.emitLog("Creating GeoTIFF...")
+		a.emitLog("Encoding GeoTIFF file...")
 		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
 		}
@@ -563,12 +572,18 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	// Download and stitch tiles
 	successCount := 0
 	for i, tile := range tiles {
-		// Emit progress
+		// Emit progress with clear status based on format
+		var status string
+		if format == "geotiff" || format == "both" {
+			status = fmt.Sprintf("Downloading and merging tile %d/%d", i+1, total)
+		} else {
+			status = fmt.Sprintf("Downloading tile %d/%d", i+1, total)
+		}
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: i,
 			Total:      total,
 			Percent:    (i * 100) / total,
-			Status:     fmt.Sprintf("Downloading tile %d/%d", i+1, total),
+			Status:     status,
 		})
 
 		// Download tile
@@ -621,14 +636,14 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		// Save as GeoTIFF with embedded projection
 		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d.tif", timestamp, zoom))
 
-		// Emit progress for GeoTIFF conversion phase
+		// Emit progress for GeoTIFF encoding phase
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: total,
 			Total:      total,
 			Percent:    99,
-			Status:     "Converting to GeoTIFF...",
+			Status:     "Encoding GeoTIFF file...",
 		})
-		a.emitLog("Creating GeoTIFF...")
+		a.emitLog("Encoding GeoTIFF file...")
 		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
 		}
@@ -1293,12 +1308,18 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 	// Download and stitch tiles
 	successCount := 0
 	for i, tile := range tiles {
-		// Emit progress
+		// Emit progress with clear status based on format
+		var status string
+		if format == "geotiff" || format == "both" {
+			status = fmt.Sprintf("Downloading and merging tile %d/%d", i+1, total)
+		} else {
+			status = fmt.Sprintf("Downloading tile %d/%d", i+1, total)
+		}
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: i,
 			Total:      total,
 			Percent:    (i * 100) / total,
-			Status:     fmt.Sprintf("Downloading tile %d/%d", i+1, total),
+			Status:     status,
 		})
 
 		// Get the correct epoch for this specific tile
@@ -1374,14 +1395,14 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		// Save as GeoTIFF with embedded projection
 		tifPath := filepath.Join(a.downloadPath, fmt.Sprintf("ge_%s_z%d.tif", dateStr, zoom))
 
-		// Emit progress for GeoTIFF conversion phase
+		// Emit progress for GeoTIFF encoding phase
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
 			Downloaded: total,
 			Total:      total,
 			Percent:    99,
-			Status:     "Converting to GeoTIFF...",
+			Status:     "Encoding GeoTIFF file...",
 		})
-		a.emitLog("Creating GeoTIFF...")
+		a.emitLog("Encoding GeoTIFF file...")
 		if err := a.saveAsGeoTIFF(outputImg, tifPath, originX, originY, pixelWidth, pixelHeight); err != nil {
 			return fmt.Errorf("failed to save GeoTIFF: %w", err)
 		}
