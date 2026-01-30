@@ -2168,16 +2168,8 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 			Status:     fmt.Sprintf("Loading frame %d/%d: %s", i+1, len(dates), dateInfo.Date),
 		})
 
-		// Construct GeoTIFF path
-		// Map source name to match what download functions use
-		sourcePrefix := source
-		if source == "ge_historical" {
-			sourcePrefix = "ge"
-		}
-
-		quadkey := generateQuadkey(bbox.South, bbox.West, bbox.North, bbox.East, zoom)
-		bboxStr := generateBBoxString(bbox.South, bbox.West, bbox.North, bbox.East)
-		filename := fmt.Sprintf("%s_%s_%s_z%d_%s.tif", sourcePrefix, dateInfo.Date, quadkey, zoom, bboxStr)
+		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
+		filename := generateGeoTIFFFilename(source, dateInfo.Date, bbox, zoom)
 		geotiffPath := filepath.Join(downloadDir, filename)
 
 		// Check if GeoTIFF exists
