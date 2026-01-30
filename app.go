@@ -95,6 +95,7 @@ func generateBBoxString(south, west, north, east float64) string {
 }
 
 // sanitizeCoordinate formats a coordinate for use in filenames (removes minus sign, uses N/S/E/W)
+// Replaces decimal point with 'p' for Windows compatibility
 func sanitizeCoordinate(coord float64, isLat bool) string {
 	dir := "E"
 	if isLat {
@@ -110,7 +111,10 @@ func sanitizeCoordinate(coord float64, isLat bool) string {
 			dir = "E"
 		}
 	}
-	return fmt.Sprintf("%.4f%s", math.Abs(coord), dir)
+	// Format and replace decimal point with 'p'
+	coordStr := fmt.Sprintf("%.4f", math.Abs(coord))
+	coordStr = strings.Replace(coordStr, ".", "p", 1)
+	return coordStr + dir
 }
 
 // generateGeoTIFFFilename creates a standardized GeoTIFF filename with metadata
@@ -2153,9 +2157,15 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		})
 
 		// Construct GeoTIFF path
+		// Map source name to match what download functions use
+		sourcePrefix := source
+		if source == "ge_historical" {
+			sourcePrefix = "ge"
+		}
+
 		quadkey := generateQuadkey(bbox.South, bbox.West, bbox.North, bbox.East, zoom)
 		bboxStr := generateBBoxString(bbox.South, bbox.West, bbox.North, bbox.East)
-		filename := fmt.Sprintf("%s_%s_%s_z%d_%s.tif", source, dateInfo.Date, quadkey, zoom, bboxStr)
+		filename := fmt.Sprintf("%s_%s_%s_z%d_%s.tif", sourcePrefix, dateInfo.Date, quadkey, zoom, bboxStr)
 		geotiffPath := filepath.Join(downloadDir, filename)
 
 		// Check if GeoTIFF exists
