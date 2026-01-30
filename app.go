@@ -1046,8 +1046,36 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		log.Printf("[DEBUG fetchHistoricalGETile] Fallback epoch %d also failed", ef.epoch)
 	}
 
+	// Last resort: Try known-good epochs for 2025+ dates
+	// These epochs may not be in the protobuf but are known to work from testing
+	knownGoodEpochs := []int{358, 357, 356, 354, 352}
+	log.Printf("[DEBUG fetchHistoricalGETile] Trying known-good epochs for recent dates: %v", knownGoodEpochs)
+	for _, knownEpoch := range knownGoodEpochs {
+		// Skip if already tried
+		if knownEpoch == epoch {
+			continue
+		}
+		alreadyTried := false
+		for _, ef := range epochList {
+			if ef.epoch == knownEpoch {
+				alreadyTried = true
+				break
+			}
+		}
+		if alreadyTried {
+			continue
+		}
+
+		log.Printf("[DEBUG fetchHistoricalGETile] Trying known-good epoch %d...", knownEpoch)
+		data, err := a.geClient.FetchHistoricalTile(tile, knownEpoch, foundHexDate)
+		if err == nil {
+			log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS with known-good epoch %d", knownEpoch)
+			return data, nil
+		}
+	}
+
 	// All epochs failed
-	return nil, fmt.Errorf("tile not available with any known epoch (tried %d epochs)", len(epochList)+1)
+	return nil, fmt.Errorf("tile not available with any known epoch (tried %d epochs)", len(epochList)+1+len(knownGoodEpochs))
 }
 
 // handleGoogleEarthHistoricalTile handles requests for historical Google Earth tiles
@@ -1419,76 +1447,97 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		}
 	}
 
-	// Download and stitch tiles
+	// Download tiles concurrently with 10 workers
+	type tileResult struct {
+		tile    *googleearth.Tile
+		data    []byte
+		index   int
+		success bool
+	}
+
+	tileChan := make(chan struct {
+		tile  *googleearth.Tile
+		index int
+	}, total)
+	resultChan := make(chan tileResult, total)
+
+	// Start worker goroutines
+	numWorkers := 10
+	if total < numWorkers {
+		numWorkers = total
+	}
+
+	for w := 0; w < numWorkers; w++ {
+		go func() {
+			for job := range tileChan {
+				data, err := a.fetchHistoricalGETile(job.tile, hexDate)
+				if err != nil {
+					log.Printf("[GEHistorical] Failed to download tile %s: %v", job.tile.Path, err)
+					resultChan <- tileResult{tile: job.tile, index: job.index, success: false}
+					continue
+				}
+				resultChan <- tileResult{tile: job.tile, data: data, index: job.index, success: true}
+			}
+		}()
+	}
+
+	// Send tiles to workers
+	go func() {
+		for i, tile := range tiles {
+			tileChan <- struct {
+				tile  *googleearth.Tile
+				index int
+			}{tile: tile, index: i}
+		}
+		close(tileChan)
+	}()
+
+	// Collect results and stitch
 	successCount := 0
-	for i, tile := range tiles {
-		// Emit progress with clear status based on format
+	processedCount := 0
+	for processedCount < total {
+		result := <-resultChan
+		processedCount++
+
+		// Emit progress
 		var status string
 		if format == "geotiff" || format == "both" {
-			status = fmt.Sprintf("Downloading and merging tile %d/%d", i+1, total)
+			status = fmt.Sprintf("Downloading and merging tile %d/%d", processedCount, total)
 		} else {
-			status = fmt.Sprintf("Downloading tile %d/%d", i+1, total)
+			status = fmt.Sprintf("Downloading tile %d/%d", processedCount, total)
 		}
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: i,
+			Downloaded: processedCount,
 			Total:      total,
-			Percent:    (i * 100) / total,
+			Percent:    (processedCount * 100) / total,
 			Status:     status,
 		})
 
-		// Get the correct epoch for this specific tile
-		availDates, err := a.geClient.GetAvailableDates(tile)
-		if err != nil {
-			log.Printf("[GEHistorical] Failed to get dates for tile %s: %v", tile.Path, err)
-			continue
-		}
-
-		// Find the epoch for the requested hexDate
-		var tileEpoch int
-		found := false
-		for _, dt := range availDates {
-			if dt.HexDate == hexDate {
-				tileEpoch = dt.Epoch
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			log.Printf("[GEHistorical] Date %s not available for tile %s", hexDate, tile.Path)
-			continue
-		}
-
-		// Download historical tile with the correct tile-specific epoch
-		data, err := a.geClient.FetchHistoricalTile(tile, tileEpoch, hexDate)
-		if err != nil {
-			log.Printf("[GEHistorical] Failed to download tile %s: %v", tile.Path, err)
+		if !result.success {
 			continue
 		}
 
 		// Save individual tile if requested
 		if format == "tiles" || format == "both" {
-			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", tile.Column, tile.Row))
-			if err := os.WriteFile(tilePath, data, 0644); err != nil {
+			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", result.tile.Column, result.tile.Row))
+			if err := os.WriteFile(tilePath, result.data, 0644); err != nil {
 				log.Printf("Failed to save tile: %v", err)
 			}
 		}
 
 		// Decode and stitch for GeoTIFF
 		if format == "geotiff" || format == "both" {
-			img, err := jpeg.Decode(bytes.NewReader(data))
+			img, err := jpeg.Decode(bytes.NewReader(result.data))
 			if err != nil {
-				log.Printf("[GEHistorical] Failed to decode tile %s: %v", tile.Path, err)
+				log.Printf("[GEHistorical] Failed to decode tile %s: %v", result.tile.Path, err)
 				continue
 			}
 
 			// Calculate position in output image
-			// GE rows increase from south to north, but image Y=0 is at top
-			// So we need to invert: higher row numbers go to lower Y positions
-			xOff := (tile.Column - minCol) * TileSize
-			yOff := (maxRow - tile.Row) * TileSize
+			xOff := (result.tile.Column - minCol) * TileSize
+			yOff := (maxRow - result.tile.Row) * TileSize
 
-			// Draw tile onto output image
+			// Draw tile onto output image (thread-safe since each tile writes to different location)
 			draw.Draw(outputImg, image.Rect(xOff, yOff, xOff+TileSize, yOff+TileSize), img, image.Point{0, 0}, draw.Src)
 		}
 		successCount++
