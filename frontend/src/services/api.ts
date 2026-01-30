@@ -16,6 +16,7 @@ import {
   DownloadGoogleEarthImagery,
   DownloadGoogleEarthHistoricalImagery,
   DownloadGoogleEarthHistoricalImageryRange,
+  ExportTimelapseVideo,
   SelectDownloadFolder,
   GetDownloadPath,
   SetDownloadPath,
@@ -81,6 +82,15 @@ export const api = {
     dates: main.GEDateInfo[],
     format: string
   ) => DownloadGoogleEarthHistoricalImageryRange(bbox, zoom, dates, format),
+
+  // Video Export
+  exportTimelapseVideo: (
+    bbox: main.BoundingBox,
+    zoom: number,
+    dates: main.GEDateInfo[],
+    source: string,
+    videoOpts: main.VideoExportOptions
+  ) => ExportTimelapseVideo(bbox, zoom, dates, source, videoOpts),
 
   // General Date Query
   getAvailableDatesForArea: (bbox: main.BoundingBox, zoom: number) =>

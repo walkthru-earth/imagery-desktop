@@ -32,7 +32,7 @@ import (
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/imagery"
-	// "imagery-desktop/internal/video" // TODO: Uncomment when video export functions are added
+	"imagery-desktop/internal/video"
 )
 
 // Linker flags
@@ -2060,4 +2060,270 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 	}
 
 	return nil
+}
+
+// ExportTimelapseVideo exports a timelapse video from a range of downloaded imagery
+func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInfo, source string, videoOpts VideoExportOptions) error {
+	if len(dates) == 0 {
+		return fmt.Errorf("no dates provided")
+	}
+
+	a.emitLog(fmt.Sprintf("Starting timelapse video export for %d dates", len(dates)))
+
+	// Get download directory
+	downloadDir := a.downloadPath
+
+	// Prepare video export options
+	var preset video.SocialMediaPreset
+	switch videoOpts.Preset {
+	case "instagram_square":
+		preset = video.PresetInstagramSquare
+	case "instagram_portrait":
+		preset = video.PresetInstagramPortrait
+	case "instagram_story":
+		preset = video.PresetInstagramStory
+	case "tiktok":
+		preset = video.PresetTikTok
+	case "youtube":
+		preset = video.PresetYouTube
+	case "youtube_shorts":
+		preset = video.PresetYouTubeShorts
+	case "twitter":
+		preset = video.PresetTwitter
+	case "facebook":
+		preset = video.PresetFacebook
+	default:
+		preset = video.PresetCustom
+	}
+
+	// Get dimensions from preset or custom
+	width, height := videoOpts.Width, videoOpts.Height
+	if preset != video.PresetCustom {
+		width, height = video.GetPresetDimensions(preset)
+	}
+
+	// Font path - we'll use an embedded or system font
+	// For now, make font optional - video export will work without date overlay if font is not found
+	fontPath := ""
+	// TODO: Embed Quicksand font or convert WOFF2 to TTF for date overlay
+
+	opts := &video.ExportOptions{
+		Width:           width,
+		Height:          height,
+		Preset:          preset,
+		UseSpotlight:    videoOpts.SpotlightEnabled,
+		OverlayOpacity:  videoOpts.OverlayOpacity,
+		OverlayColor:    video.DefaultExportOptions().OverlayColor, // Use default black
+		ShowDateOverlay: videoOpts.ShowDateOverlay,
+		DateFontSize:    videoOpts.DateFontSize,
+		DatePosition:    videoOpts.DatePosition,
+		DateColor:       video.DefaultExportOptions().DateColor, // Use default white
+		DateShadow:      true,
+		DateFormat:      "Jan 02, 2006",
+		DateFontPath:    fontPath,
+		FrameRate:       30,
+		FrameDelay:      videoOpts.FrameDelay,
+		OutputFormat:    videoOpts.OutputFormat,
+		Quality:         videoOpts.Quality,
+	}
+
+	// If spotlight is enabled, calculate pixel coordinates from geographic coordinates
+	if videoOpts.SpotlightEnabled {
+		// For now, we'll process the full image and let the video processor handle spotlight
+		// This requires loading the full GeoTIFF to get pixel dimensions first
+		a.emitLog("Spotlight mode enabled - will calculate coordinates from first frame")
+	}
+
+	// Create video exporter
+	exporter, err := video.NewExporter(opts)
+	if err != nil {
+		return fmt.Errorf("failed to create video exporter: %w", err)
+	}
+	defer exporter.Close()
+
+	// Load frames from GeoTIFFs
+	frames := make([]video.Frame, 0, len(dates))
+
+	for i, dateInfo := range dates {
+		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+			Downloaded: i,
+			Total:      len(dates),
+			Percent:    (i * 100) / len(dates),
+			Status:     fmt.Sprintf("Loading frame %d/%d: %s", i+1, len(dates), dateInfo.Date),
+		})
+
+		// Construct GeoTIFF path
+		quadkey := generateQuadkey(bbox.South, bbox.West, bbox.North, bbox.East, zoom)
+		bboxStr := generateBBoxString(bbox.South, bbox.West, bbox.North, bbox.East)
+		filename := fmt.Sprintf("%s_%s_%s_z%d_%s.tif", source, dateInfo.Date, quadkey, zoom, bboxStr)
+		geotiffPath := filepath.Join(downloadDir, filename)
+
+		// Check if GeoTIFF exists
+		if _, err := os.Stat(geotiffPath); os.IsNotExist(err) {
+			a.emitLog(fmt.Sprintf("GeoTIFF not found for %s, skipping: %s", dateInfo.Date, geotiffPath))
+			continue
+		}
+
+		// Load image
+		img, err := a.loadGeoTIFFImage(geotiffPath)
+		if err != nil {
+			a.emitLog(fmt.Sprintf("Failed to load GeoTIFF for %s: %v", dateInfo.Date, err))
+			continue
+		}
+
+		// Convert to RGBA if needed
+		var rgba *image.RGBA
+		if rgbaImg, ok := img.(*image.RGBA); ok {
+			rgba = rgbaImg
+		} else {
+			bounds := img.Bounds()
+			rgba = image.NewRGBA(bounds)
+			draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+		}
+
+		// Calculate spotlight coordinates from geographic coordinates on first frame
+		if videoOpts.SpotlightEnabled && i == 0 {
+			// Calculate spotlight pixel coordinates based on geographic center and radius
+			spotlightPixels := a.calculateSpotlightPixels(
+				bbox, zoom,
+				videoOpts.SpotlightCenterLat, videoOpts.SpotlightCenterLon,
+				videoOpts.SpotlightRadiusKm,
+				rgba.Bounds(),
+			)
+			opts.SpotlightX = spotlightPixels.X
+			opts.SpotlightY = spotlightPixels.Y
+			opts.SpotlightWidth = spotlightPixels.Width
+			opts.SpotlightHeight = spotlightPixels.Height
+			a.emitLog(fmt.Sprintf("Spotlight area: x=%d y=%d w=%d h=%d",
+				spotlightPixels.X, spotlightPixels.Y, spotlightPixels.Width, spotlightPixels.Height))
+		}
+
+		// Parse date
+		parsedDate, err := time.Parse("2006-01-02", dateInfo.Date)
+		if err != nil {
+			a.emitLog(fmt.Sprintf("Failed to parse date %s: %v", dateInfo.Date, err))
+			parsedDate = time.Now()
+		}
+
+		frames = append(frames, video.Frame{
+			Image: rgba,
+			Date:  parsedDate,
+		})
+	}
+
+	if len(frames) == 0 {
+		return fmt.Errorf("no frames loaded - ensure GeoTIFFs are downloaded first")
+	}
+
+	a.emitLog(fmt.Sprintf("Loaded %d frames, starting video encoding...", len(frames)))
+
+	// Generate output filename
+	outputFilename := fmt.Sprintf("%s_timelapse_%s_to_%s_%s.%s",
+		source,
+		dates[0].Date,
+		dates[len(dates)-1].Date,
+		videoOpts.Preset,
+		videoOpts.OutputFormat,
+	)
+	outputPath := filepath.Join(downloadDir, "timelapse_exports", outputFilename)
+
+	// Create output directory
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Export video
+	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		Downloaded: len(frames),
+		Total:      len(frames),
+		Percent:    99,
+		Status:     "Encoding video...",
+	})
+
+	if err := exporter.ExportVideo(frames, outputPath); err != nil {
+		return fmt.Errorf("failed to export video: %w", err)
+	}
+
+	a.emitLog(fmt.Sprintf("Video exported successfully: %s", outputPath))
+
+	// Emit completion
+	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		Downloaded: len(frames),
+		Total:      len(frames),
+		Percent:    100,
+		Status:     fmt.Sprintf("Video export complete: %s", filepath.Base(outputPath)),
+	})
+
+	// Auto-open download folder
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
+
+	return nil
+}
+
+// loadGeoTIFFImage loads an image from a GeoTIFF file
+func (a *App) loadGeoTIFFImage(path string) (image.Image, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// Decode using standard image package (supports TIFF)
+	img, _, err := image.Decode(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
+	}
+
+	return img, nil
+}
+
+// SpotlightPixels represents pixel coordinates for spotlight area
+type SpotlightPixels struct {
+	X, Y, Width, Height int
+}
+
+// calculateSpotlightPixels converts geographic spotlight coordinates to pixel coordinates
+func (a *App) calculateSpotlightPixels(bbox BoundingBox, zoom int, centerLat, centerLon, radiusKm float64, imgBounds image.Rectangle) SpotlightPixels {
+	// Convert bbox and center to Web Mercator coordinates (meters)
+	toWebMercator := func(lat, lon float64) (x, y float64) {
+		x = lon * 20037508.34 / 180.0
+		y = math.Log(math.Tan((90+lat)*math.Pi/360.0)) / (math.Pi / 180.0)
+		y = y * 20037508.34 / 180.0
+		return
+	}
+
+	// Calculate image extent in Web Mercator
+	westX, southY := toWebMercator(bbox.South, bbox.West)
+	eastX, northY := toWebMercator(bbox.North, bbox.East)
+
+	// Calculate spotlight center in Web Mercator
+	centerX, centerY := toWebMercator(centerLat, centerLon)
+
+	// Convert radius from km to meters
+	radiusMeters := radiusKm * 1000.0
+
+	// Calculate image dimensions
+	imgWidth := float64(imgBounds.Dx())
+	imgHeight := float64(imgBounds.Dy())
+
+	// Calculate pixel scale
+	scaleX := imgWidth / (eastX - westX)
+	scaleY := imgHeight / (northY - southY)
+
+	// Convert spotlight center to pixel coordinates
+	spotlightCenterX := int((centerX - westX) * scaleX)
+	spotlightCenterY := int((northY - centerY) * scaleY) // Y is inverted in image coordinates
+
+	// Convert radius to pixels (use average of X and Y scales)
+	avgScale := (scaleX + scaleY) / 2.0
+	spotlightRadiusPixels := int(radiusMeters * avgScale)
+
+	return SpotlightPixels{
+		X:      spotlightCenterX - spotlightRadiusPixels,
+		Y:      spotlightCenterY - spotlightRadiusPixels,
+		Width:  spotlightRadiusPixels * 2,
+		Height: spotlightRadiusPixels * 2,
+	}
 }

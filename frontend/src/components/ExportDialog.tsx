@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/services/api";
 import type { BoundingBox, GEDateInfo } from "@/types";
+import { main } from "@/../wailsjs/go/models";
 
 export interface ExportOptions {
   tiles: boolean;
@@ -123,10 +124,47 @@ export function ExportDialog({
           await api.downloadGoogleEarthHistoricalImageryRange(bbox, exportZoom, geDates, format);
         }
 
-        // TODO: Video export if requested
-        if (includeVideo) {
-          // This will be implemented when backend video export is added
-          console.log(`Video export (${videoFormat}) not yet implemented`);
+        // Video export if requested (after GeoTIFFs are downloaded)
+        if (includeVideo && format !== "tiles") {
+          setProgress({
+            downloaded: 0,
+            total: 1,
+            percent: 0,
+            status: "Starting video export..."
+          });
+
+          // Prepare video export options with sensible defaults
+          const videoOpts = new main.VideoExportOptions({
+            width: 1920,
+            height: 1080,
+            preset: "youtube", // Default preset
+            spotlightEnabled: false,
+            spotlightCenterLat: 0,
+            spotlightCenterLon: 0,
+            spotlightRadiusKm: 1.0,
+            overlayOpacity: 0.6,
+            showDateOverlay: true,
+            dateFontSize: 48,
+            datePosition: "bottom-right",
+            frameDelay: 0.5, // 2 images per second
+            outputFormat: videoFormat,
+            quality: 90,
+          });
+
+          // Convert dateRange to proper GEDateInfo array
+          const geDatesForVideo: GEDateInfo[] = dateRange.map(d => ({
+            date: d.date,
+            hexDate: d.hexDate || "",
+            epoch: d.epoch || 0,
+          }));
+
+          await api.exportTimelapseVideo(
+            bbox,
+            exportZoom,
+            geDatesForVideo,
+            source === "esri" ? "esri" : "ge_historical",
+            videoOpts
+          );
         }
       } else {
         // Single date export
@@ -280,7 +318,7 @@ export function ExportDialog({
               )}
 
               <p className="text-xs text-muted-foreground ml-6">
-                Timelapse video showing changes over time (coming soon)
+                Timelapse video showing changes over time
               </p>
             </div>
           )}
