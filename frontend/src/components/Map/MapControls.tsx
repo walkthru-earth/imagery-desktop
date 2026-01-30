@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useState } from "react";
-import { Download, Calendar } from "lucide-react";
+import { Download, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, MoveVertical } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -39,7 +39,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
 
   return (
     <Card className="bg-background/95 backdrop-blur-lg">
-      <CardContent className="p-4 space-y-3">
+      <CardContent className="p-5 space-y-2.5">
         {/* Source Selector and Export */}
         <div className="flex gap-2 items-center">
           <SourceSelector
@@ -48,11 +48,11 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
               console.log("[MapControls] Single view - switching to:", source);
               dispatch({ type: "SET_MAP_SOURCE", map: "single", source: source as ImagerySource });
             }}
-            size="sm"
+            size="md"
             className="flex-1"
           />
           <Button
-            size="sm"
+            size="default"
             variant={isRangeMode ? "default" : "outline"}
             onClick={() => {
               setIsRangeMode(!isRangeMode);
@@ -64,18 +64,18 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
             }}
             title="Toggle range selection"
           >
-            <Calendar className="h-4 w-4" />
+            <Calendar className="h-5 w-5" />
           </Button>
           {onExport && dates.length > 0 && (
             <Button
-              size="sm"
+              size="default"
               variant="outline"
               onClick={isRangeMode ? handleExportRange : onExport}
               title={isRangeMode ? "Export selected date range" : "Export current view"}
             >
-              <Download className="h-4 w-4" />
+              <Download className="h-5 w-5" />
               {isRangeMode && (
-                <span className="ml-1 text-xs">
+                <span className="ml-1.5 text-sm font-medium">
                   ({Math.abs(rangeEnd - rangeStart) + 1})
                 </span>
               )}
@@ -85,15 +85,43 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
 
         {/* Date Slider */}
         {dates.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {isRangeMode ? (
               <>
                 {/* Range Mode - Single Dual-Thumb Slider */}
-                <div className="text-sm font-medium text-center">
-                  {dates[rangeStart]?.date} → {dates[rangeEnd]?.date}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    ({Math.abs(rangeEnd - rangeStart) + 1} dates)
-                  </span>
+                <div className="flex items-center justify-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const newStart = Math.max(0, rangeStart - 1);
+                      setRangeStart(newStart);
+                      if (rangeEnd < newStart) setRangeEnd(newStart);
+                    }}
+                    disabled={rangeStart === 0}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="text-base font-semibold text-center flex-1">
+                    {dates[rangeStart]?.date} → {dates[rangeEnd]?.date}
+                    <span className="ml-2 text-sm text-muted-foreground font-normal">
+                      ({Math.abs(rangeEnd - rangeStart) + 1} dates)
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const newEnd = Math.min(dates.length - 1, rangeEnd + 1);
+                      setRangeEnd(newEnd);
+                      if (rangeStart > newEnd) setRangeStart(newEnd);
+                    }}
+                    disabled={rangeEnd === dates.length - 1}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
                 <div className="px-1">
                   <Slider
@@ -108,7 +136,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
                     className="w-full"
                   />
                 </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
+                <div className="flex justify-between text-sm text-muted-foreground">
                   <span>{dates[0]?.date}</span>
                   <span>{dates[dates.length - 1]?.date}</span>
                 </div>
@@ -116,16 +144,50 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
             ) : (
               <>
                 {/* Single Mode - One Slider */}
-                <div className="text-sm font-medium text-center">
-                  {dates[mapState.dateIndex]?.date || "No date"}
+                <div className="flex items-center justify-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const newIndex = Math.max(0, mapState.dateIndex - 1);
+                      dispatch({
+                        type: "SET_DATE_INDEX",
+                        map: "single",
+                        index: newIndex,
+                      });
+                    }}
+                    disabled={mapState.dateIndex === 0}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="text-base font-semibold text-center flex-1">
+                    {dates[mapState.dateIndex]?.date || "No date"}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const newIndex = Math.min(dates.length - 1, mapState.dateIndex + 1);
+                      dispatch({
+                        type: "SET_DATE_INDEX",
+                        map: "single",
+                        index: newIndex,
+                      });
+                    }}
+                    disabled={mapState.dateIndex === dates.length - 1}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
-                <input
-                  type="range"
-                  min="0"
+                <Slider
+                  min={0}
                   max={Math.max(0, dates.length - 1)}
-                  value={mapState.dateIndex}
-                  onChange={(e) => {
-                    const newIndex = parseInt(e.target.value);
+                  step={1}
+                  value={[mapState.dateIndex]}
+                  onValueChange={(values) => {
+                    const newIndex = values[0];
                     console.log("[MapControls] Single view - date index changed to:", newIndex, dates[newIndex]?.date);
                     dispatch({
                       type: "SET_DATE_INDEX",
@@ -135,7 +197,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
                   }}
                   className="w-full"
                 />
-                <div className="flex justify-between text-xs text-muted-foreground">
+                <div className="flex justify-between text-sm text-muted-foreground">
                   <span>{dates[0]?.date}</span>
                   <span>{dates[dates.length - 1]?.date}</span>
                 </div>
@@ -148,104 +210,6 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
   );
 }
 
-// Split View - Left and Right Timeline Controls
-function SplitViewTimeline() {
-  const { state, dispatch } = useImageryContext();
-
-  const leftDates = getAvailableDates(state, "left");
-  const rightDates = getAvailableDates(state, "right");
-
-  const leftMapState = state.maps.left;
-  const rightMapState = state.maps.right;
-
-  return (
-    <>
-      {/* Left Control */}
-      <Card className="bg-background/95 backdrop-blur-lg">
-        <CardContent className="p-3 space-y-2">
-          <div className="text-xs font-semibold text-center">Left</div>
-
-          {/* Source Selector */}
-          <SourceSelector
-            value={leftMapState.source}
-            onChange={(source) => {
-              console.log("[MapControls] Left map - switching to:", source);
-              dispatch({ type: "SET_MAP_SOURCE", map: "left", source: source as ImagerySource });
-            }}
-            size="sm"
-          />
-
-          {/* Date Slider */}
-          {leftDates.length > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-center">
-                {leftDates[leftMapState.dateIndex]?.date}
-              </div>
-              <input
-                type="range"
-                min="0"
-                max={Math.max(0, leftDates.length - 1)}
-                value={leftMapState.dateIndex}
-                onChange={(e) => {
-                  const newIndex = parseInt(e.target.value);
-                  console.log("[MapControls] Left map - date index changed to:", newIndex, leftDates[newIndex]?.date);
-                  dispatch({
-                    type: "SET_DATE_INDEX",
-                    map: "left",
-                    index: newIndex,
-                  });
-                }}
-                className="w-full"
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Right Control */}
-      <Card className="bg-background/95 backdrop-blur-lg">
-        <CardContent className="p-3 space-y-2">
-          <div className="text-xs font-semibold text-center">Right</div>
-
-          {/* Source Selector */}
-          <SourceSelector
-            value={rightMapState.source}
-            onChange={(source) => {
-              console.log("[MapControls] Right map - switching to:", source);
-              dispatch({ type: "SET_MAP_SOURCE", map: "right", source: source as ImagerySource });
-            }}
-            size="sm"
-          />
-
-          {/* Date Slider */}
-          {rightDates.length > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-center">
-                {rightDates[rightMapState.dateIndex]?.date}
-              </div>
-              <input
-                type="range"
-                min="0"
-                max={Math.max(0, rightDates.length - 1)}
-                value={rightMapState.dateIndex}
-                onChange={(e) => {
-                  const newIndex = parseInt(e.target.value);
-                  console.log("[MapControls] Right map - date index changed to:", newIndex, rightDates[newIndex]?.date);
-                  dispatch({
-                    type: "SET_DATE_INDEX",
-                    map: "right",
-                    index: newIndex,
-                  });
-                }}
-                className="w-full"
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </>
-  );
-}
 
 // Main MapControls Component
 export function MapControls({
@@ -255,21 +219,217 @@ export function MapControls({
   className?: string;
   onExport?: () => void;
 }) {
-  const { state } = useImageryContext();
+  const { state, dispatch } = useImageryContext();
 
-  return (
-    <div
-      className={cn(
-        "absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex gap-4 items-end",
-        state.viewMode === "single" ? "w-[600px]" : "w-[700px]",
-        className
-      )}
-    >
-      {state.viewMode === "single" ? (
+  if (state.viewMode === "single") {
+    // Single view - centered at bottom
+    return (
+      <div
+        className={cn(
+          "absolute bottom-4 left-1/2 -translate-x-1/2 z-10",
+          "w-[800px]",
+          className
+        )}
+      >
         <SingleViewTimeline onExport={onExport} />
-      ) : (
-        <SplitViewTimeline />
-      )}
-    </div>
+      </div>
+    );
+  }
+
+  // Split view - vertical controls at left and right center
+  return (
+    <>
+      {/* Left Control - vertically centered on left */}
+      <div
+        className={cn(
+          "absolute left-4 top-1/2 -translate-y-1/2 z-10",
+          "w-[160px]",
+          className
+        )}
+      >
+        <Card className="bg-background/95 backdrop-blur-lg">
+          <CardContent className="p-4 space-y-3 flex flex-col items-center">
+            <div className="text-sm font-semibold">Left</div>
+
+            {/* Source Selector */}
+            <SourceSelector
+              value={state.maps.left.source}
+              onChange={(source) => {
+                console.log("[MapControls] Left map - switching to:", source);
+                dispatch({ type: "SET_MAP_SOURCE", map: "left", source: source as ImagerySource });
+              }}
+              size="sm"
+              className="w-full"
+            />
+
+            {/* Date Slider - Vertical */}
+            {getAvailableDates(state, "left").length > 0 && (
+              <div className="flex flex-col items-center space-y-2 w-full">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const newIndex = Math.max(0, state.maps.left.dateIndex - 1);
+                    dispatch({
+                      type: "SET_DATE_INDEX",
+                      map: "left",
+                      index: newIndex,
+                    });
+                  }}
+                  disabled={state.maps.left.dateIndex === 0}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </Button>
+                <div className="text-sm font-medium text-center">
+                  {getAvailableDates(state, "left")[state.maps.left.dateIndex]?.date}
+                </div>
+                <div className="flex items-center justify-center h-[300px]">
+                  <Slider
+                    min={0}
+                    max={Math.max(0, getAvailableDates(state, "left").length - 1)}
+                    step={1}
+                    value={[state.maps.left.dateIndex]}
+                    onValueChange={(values) => {
+                      const newIndex = values[0];
+                      const leftDates = getAvailableDates(state, "left");
+                      console.log("[MapControls] Left map - date index changed to:", newIndex, leftDates[newIndex]?.date);
+                      dispatch({
+                        type: "SET_DATE_INDEX",
+                        map: "left",
+                        index: newIndex,
+                      });
+                    }}
+                    orientation="vertical"
+                    inverted
+                    className="h-[300px]"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const newIndex = Math.min(
+                      getAvailableDates(state, "left").length - 1,
+                      state.maps.left.dateIndex + 1
+                    );
+                    dispatch({
+                      type: "SET_DATE_INDEX",
+                      map: "left",
+                      index: newIndex,
+                    });
+                  }}
+                  disabled={state.maps.left.dateIndex === getAvailableDates(state, "left").length - 1}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+                <div className="flex flex-col items-center text-xs text-muted-foreground space-y-1">
+                  <span>{getAvailableDates(state, "left")[0]?.date}</span>
+                  <MoveVertical className="h-3 w-3 text-primary" />
+                  <span>{getAvailableDates(state, "left")[getAvailableDates(state, "left").length - 1]?.date}</span>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Right Control - vertically centered on right */}
+      <div
+        className={cn(
+          "absolute right-4 top-1/2 -translate-y-1/2 z-10",
+          "w-[160px]",
+          className
+        )}
+      >
+        <Card className="bg-background/95 backdrop-blur-lg">
+          <CardContent className="p-4 space-y-3 flex flex-col items-center">
+            <div className="text-sm font-semibold">Right</div>
+
+            {/* Source Selector */}
+            <SourceSelector
+              value={state.maps.right.source}
+              onChange={(source) => {
+                console.log("[MapControls] Right map - switching to:", source);
+                dispatch({ type: "SET_MAP_SOURCE", map: "right", source: source as ImagerySource });
+              }}
+              size="sm"
+              className="w-full"
+            />
+
+            {/* Date Slider - Vertical */}
+            {getAvailableDates(state, "right").length > 0 && (
+              <div className="flex flex-col items-center space-y-2 w-full">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const newIndex = Math.max(0, state.maps.right.dateIndex - 1);
+                    dispatch({
+                      type: "SET_DATE_INDEX",
+                      map: "right",
+                      index: newIndex,
+                    });
+                  }}
+                  disabled={state.maps.right.dateIndex === 0}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </Button>
+                <div className="text-sm font-medium text-center">
+                  {getAvailableDates(state, "right")[state.maps.right.dateIndex]?.date}
+                </div>
+                <div className="flex items-center justify-center h-[300px]">
+                  <Slider
+                    min={0}
+                    max={Math.max(0, getAvailableDates(state, "right").length - 1)}
+                    step={1}
+                    value={[state.maps.right.dateIndex]}
+                    onValueChange={(values) => {
+                      const newIndex = values[0];
+                      const rightDates = getAvailableDates(state, "right");
+                      console.log("[MapControls] Right map - date index changed to:", newIndex, rightDates[newIndex]?.date);
+                      dispatch({
+                        type: "SET_DATE_INDEX",
+                        map: "right",
+                        index: newIndex,
+                      });
+                    }}
+                    orientation="vertical"
+                    inverted
+                    className="h-[300px]"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const newIndex = Math.min(
+                      getAvailableDates(state, "right").length - 1,
+                      state.maps.right.dateIndex + 1
+                    );
+                    dispatch({
+                      type: "SET_DATE_INDEX",
+                      map: "right",
+                      index: newIndex,
+                    });
+                  }}
+                  disabled={state.maps.right.dateIndex === getAvailableDates(state, "right").length - 1}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+                <div className="flex flex-col items-center text-xs text-muted-foreground space-y-1">
+                  <span>{getAvailableDates(state, "right")[0]?.date}</span>
+                  <MoveVertical className="h-3 w-3 text-primary" />
+                  <span>{getAvailableDates(state, "right")[getAvailableDates(state, "right").length - 1]?.date}</span>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </>
   );
 }
