@@ -98,6 +98,19 @@ See [Wails documentation](https://wails.io/docs/reference/project-config) for al
 - [Tailwind CSS Documentation](https://tailwindcss.com/)
 - [shadcn/ui Documentation](https://ui.shadcn.com/)
 
-## ⚠️ Educational Purpose
+## ⚠️ Educational Purpose & Legal
 
-This project is created for **educational purposes only**. It comes with **no license** and is provided as-is, without any warranty. You may use it to learn, but please respect the lack of a formal open-source license.
+This project is created for educational purposes only and is provided as-is, without any warranty.
+
+### Software License
+
+The software code in this repository is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](LICENSE). You are free to share and adapt the code with proper attribution to Walkthru Earth (hi@walkthru.earth).
+
+### Imagery Copyright
+
+**IMPORTANT**: The satellite imagery accessed through this application remains the property of the respective providers:
+
+- **Esri Wayback Imagery**: © Esri and its data providers. All rights reserved.
+- **Google Earth Imagery**: © Google and its data providers. All rights reserved.
+
+This software does not grant any rights to the satellite imagery itself. Users are responsible for complying with the terms of service and licensing requirements of Esri and Google when using their imagery. Any use of the imagery is subject to the providers' terms and conditions, and users assume all responsibility and liability for their use of the imagery.
