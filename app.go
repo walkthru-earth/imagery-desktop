@@ -23,10 +23,20 @@ import (
 
 	"imagery-desktop/pkg/geotiff"
 
+	"github.com/posthog/posthog-go"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"imagery-desktop/internal/cache"
+	"imagery-desktop/internal/config"
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
+	"imagery-desktop/internal/imagery"
+)
+
+// Linker flags
+var (
+	PostHogKey  string
+	PostHogHost string
 )
 
 // ImagerySource represents the source of imagery
@@ -40,6 +50,14 @@ const (
 	DownloadWorkers = 10
 	TileSize        = 256
 )
+
+// Helper function for max of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // BoundingBox represents a geographic bounding box
 type BoundingBox struct {
@@ -76,22 +94,61 @@ type App struct {
 	ctx           context.Context
 	geClient      *googleearth.Client
 	esriClient    *esri.Client
+	tileCache     *cache.TileCache
+	downloader    *imagery.TileDownloader
 	downloadPath  string
 	tileServerURL string
+	settings      *config.UserSettings
 	mu            sync.Mutex
 	devMode       bool // Enable verbose logging in dev mode only
+	phClient      posthog.Client
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	// Default download path to user's Downloads folder
-	homeDir, _ := os.UserHomeDir()
-	downloadPath := filepath.Join(homeDir, "Downloads", "imagery")
+	// Load user settings
+	settings, err := config.LoadSettings()
+	if err != nil {
+		log.Printf("Failed to load settings, using defaults: %v", err)
+		settings = config.DefaultSettings()
+	}
+	log.Printf("Settings loaded from: %s", config.GetSettingsPath())
+
+	// Initialize cache with settings
+	cacheDir := cache.GetCacheDir()
+	tileCache, err := cache.NewTileCache(cacheDir, settings.CacheMaxSizeMB)
+	if err != nil {
+		log.Printf("Failed to initialize tile cache: %v", err)
+		tileCache = nil // Continue without cache
+	} else {
+		log.Printf("Tile cache initialized at %s (max %d MB)", cacheDir, settings.CacheMaxSizeMB)
+	}
+
+	// Initialize unified downloader
+	downloader := imagery.NewTileDownloader(DownloadWorkers, tileCache)
+
+	// Initialize PostHog
+	var phClient posthog.Client
+	if PostHogKey != "" {
+		phConfig := posthog.Config{
+			Endpoint: PostHogHost,
+		}
+		client, err := posthog.NewWithConfig(PostHogKey, phConfig)
+		if err != nil {
+			log.Printf("Failed to initialize PostHog: %v", err)
+		} else {
+			phClient = client
+		}
+	}
 
 	return &App{
 		geClient:     googleearth.NewClient(),
 		esriClient:   esri.NewClient(),
-		downloadPath: downloadPath,
+		tileCache:    tileCache,
+		downloader:   downloader,
+		downloadPath: settings.DownloadPath,
+		settings:     settings,
+		phClient:     phClient,
 	}
 }
 
@@ -121,6 +178,40 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start local tile server
 	go a.StartTileServer()
+
+	// Track app start
+	a.TrackEvent("app_started", map[string]interface{}{
+		"version": a.GetAppVersion(),
+		"os":      goruntime.GOOS,
+		"arch":    goruntime.GOARCH,
+	})
+}
+
+// TrackEvent sends an event to PostHog
+func (a *App) TrackEvent(event string, props map[string]interface{}) {
+	if a.phClient != nil {
+		// Use a distinct ID if possible, for now we use anonymous or machine ID if we had one
+		// For desktop apps without login, usually we might generate a UUID and store it in settings
+		// Falling back to "anonymous_backend" for now, or better:
+		// We could defer to frontend for user tracking, but backend tracking is useful for errors
+		a.phClient.Enqueue(posthog.Capture{
+			DistinctId: "backend_user", // Ideally should be unique per install
+			Event:      event,
+			Properties: props,
+		})
+	}
+}
+
+// Shutdown cleans up resources
+func (a *App) Shutdown(ctx context.Context) {
+	if a.phClient != nil {
+		a.phClient.Close()
+	}
+}
+
+// GetAppVersion returns the current application version
+func (a *App) GetAppVersion() string {
+	return "0.1.0"
 }
 
 // GetTileInfo calculates tile information for a bounding box
@@ -389,6 +480,8 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		})
 
 		if result.err != nil {
+			// Only log unique errors to avoid spam
+			// a.TrackEvent("tile_download_error", map[string]interface{}{"source": "esri", "error": result.err.Error()})
 			continue
 		}
 
@@ -418,6 +511,16 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	}
 
 	a.emitLog(fmt.Sprintf("Processed %d/%d tiles", successCount, total))
+
+	// Track download completion
+	a.TrackEvent("download_complete", map[string]interface{}{
+		"source":  "esri",
+		"zoom":    zoom,
+		"total":   total,
+		"success": successCount,
+		"failed":  total - successCount,
+		"format":  format,
+	})
 
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
@@ -456,6 +559,12 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		Percent:    100,
 		Status:     "Complete",
 	})
+
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
 
 	return nil
 }
@@ -589,7 +698,8 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		// Download tile
 		data, err := a.geClient.FetchTile(tile)
 		if err != nil {
-			log.Printf("[GEDownload] Failed to download tile %s: %v", tile.Path, err)
+			// Only log in dev mode
+			a.emitLog(fmt.Sprintf("[GEDownload] Failed to download tile %s: %v", tile.Path, err))
 			continue
 		}
 
@@ -597,7 +707,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		if format == "tiles" || format == "both" {
 			tilePath := filepath.Join(tilesDir, fmt.Sprintf("tile_%d_%d.jpg", tile.Column, tile.Row))
 			if err := os.WriteFile(tilePath, data, 0644); err != nil {
-				log.Printf("Failed to save tile: %v", err)
+				a.emitLog(fmt.Sprintf("Failed to save tile: %v", err))
 			}
 		}
 
@@ -605,7 +715,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		if format == "geotiff" || format == "both" {
 			img, err := jpeg.Decode(bytes.NewReader(data))
 			if err != nil {
-				log.Printf("[GEDownload] Failed to decode tile %s: %v", tile.Path, err)
+				a.emitLog(fmt.Sprintf("[GEDownload] Failed to decode tile %s: %v", tile.Path, err))
 				continue
 			}
 
@@ -622,6 +732,16 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	}
 
 	a.emitLog(fmt.Sprintf("Processed %d/%d tiles", successCount, total))
+
+	// Track download completion
+	a.TrackEvent("download_complete", map[string]interface{}{
+		"source":  "google_earth",
+		"zoom":    zoom,
+		"total":   total,
+		"success": successCount,
+		"failed":  total - successCount,
+		"format":  format,
+	})
 
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
@@ -662,6 +782,12 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		Percent:    100,
 		Status:     "Complete",
 	})
+
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
 
 	return nil
 }
@@ -757,6 +883,12 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 	})
 
 	a.emitLog(fmt.Sprintf("Bulk download complete: %d unique, %d skipped", downloadedCount, skippedCount))
+
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
 
 	return nil
 }
@@ -899,9 +1031,27 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			data, err := a.geClient.FetchTile(tile)
-			if err != nil {
-				continue
+			// Try cache first
+			cacheKey := fmt.Sprintf("ge:%s:current", tile.Path)
+			var data []byte
+
+			if a.tileCache != nil {
+				if cachedData, found := a.tileCache.Get(cacheKey); found {
+					data = cachedData
+				}
+			}
+
+			// Fetch from source if not cached
+			if data == nil {
+				data, err = a.geClient.FetchTile(tile)
+				if err != nil {
+					continue
+				}
+
+				// Cache the result
+				if a.tileCache != nil {
+					a.tileCache.Set(cacheKey, data)
+				}
 			}
 
 			img, _, err := image.Decode(bytes.NewReader(data))
@@ -1113,20 +1263,29 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Try to fetch historical tiles, with fallback to lower zoom levels
-	// Historical imagery may not be available at high zoom levels (16+)
+	// Try to fetch historical tiles with smart zoom fallback
+	// Strategy: Try harder at requested zoom before falling back (epoch fallback happens per tile)
 	geTiles := make(map[string]image.Image)
 	sourceZoom := z
 
 	// Get geographic bounds of the requested Web Mercator tile (fixed for all attempts)
 	south, west, north, east := googleearth.WebMercatorTileBounds(x, y, z)
 
-	for tryZoom := z; tryZoom >= 10 && len(geTiles) == 0; tryZoom-- {
+	// Smart fallback: only try z, z-1, z-2, z-3 (instead of all the way to 10)
+	// High zoom tiles (17-19) usually exist with the right epoch (358 for 2025+)
+	// fetchHistoricalGETile already has three-layer epoch fallback, so give it a chance
+	maxFallback := 3
+	if z <= 16 {
+		maxFallback = 6 // More aggressive fallback for lower zooms where coverage is sparser
+	}
+
+	for tryZoom := z; tryZoom >= max(z-maxFallback, 10) && len(geTiles) == 0; tryZoom-- {
 		// Find GE tiles at tryZoom that cover the same geographic area
 		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
 
 		log.Printf("[GEHistorical] z=%d x=%d y=%d: trying zoom %d, need %d tiles", z, x, y, tryZoom, len(requiredTiles))
 
+		successCount := 0
 		for _, tc := range requiredTiles {
 			tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
 			if err != nil {
@@ -1134,10 +1293,30 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 				continue
 			}
 
-			data, err := a.fetchHistoricalGETile(tile, hexDate)
-			if err != nil {
-				log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
-				continue
+			// Try cache first
+			cacheKey := fmt.Sprintf("ge:%s:%s", tile.Path, hexDate)
+			var data []byte
+
+			if a.tileCache != nil {
+				if cachedData, found := a.tileCache.Get(cacheKey); found {
+					data = cachedData
+					successCount++
+				}
+			}
+
+			// Fetch from source if not cached (with full epoch fallback)
+			if data == nil {
+				data, err = a.fetchHistoricalGETile(tile, hexDate)
+				if err != nil {
+					log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
+					continue
+				}
+
+				// Cache the successful result
+				if a.tileCache != nil {
+					a.tileCache.Set(cacheKey, data)
+				}
+				successCount++
 			}
 
 			img, _, err := image.Decode(bytes.NewReader(data))
@@ -1155,9 +1334,11 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		if len(geTiles) > 0 {
 			sourceZoom = tryZoom
 			if tryZoom < z {
-				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d (got %d/%d tiles at original zoom)",
+				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d (got %d/%d tiles)",
 					z, x, y, hexDate, tryZoom, len(geTiles), len(requiredTiles))
 			}
+			// Early exit - we got tiles, stop trying lower zooms
+			break
 		}
 	}
 
@@ -1237,11 +1418,11 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 	// Sample multiple tiles across the viewport for better date coverage
 	// At high zoom levels (17-19), different tiles have different available dates
 	samplePoints := []struct{ lat, lon float64 }{
-		{(bbox.South + bbox.North) / 2, (bbox.West + bbox.East) / 2}, // Center
-		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25},   // NW quadrant
-		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25},   // NE quadrant
-		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25},   // SW quadrant
-		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25},   // SE quadrant
+		{(bbox.South + bbox.North) / 2, (bbox.West + bbox.East) / 2},                        // Center
+		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25}, // NW quadrant
+		{bbox.North - (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25}, // NE quadrant
+		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.West + (bbox.East-bbox.West)*0.25}, // SW quadrant
+		{bbox.South + (bbox.North-bbox.South)*0.25, bbox.East - (bbox.East-bbox.West)*0.25}, // SE quadrant
 	}
 
 	// Collect dates from all sample tiles
@@ -1585,6 +1766,12 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		Status:     "Complete",
 	})
 
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
+
 	return nil
 }
 
@@ -1625,6 +1812,12 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 		Percent:    100,
 		Status:     fmt.Sprintf("Downloaded %d dates", total),
 	})
+
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
 
 	return nil
 }

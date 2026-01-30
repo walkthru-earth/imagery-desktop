@@ -9,6 +9,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Polyfill events module for maplibre-gl-compare
+      events: "events",
     },
+  },
+  optimizeDeps: {
+    include: ["events"],
   },
 })
