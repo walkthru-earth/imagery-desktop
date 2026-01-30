@@ -22,6 +22,8 @@ interface UserSettings {
   showTileGrid: boolean;
   showCoordinates: boolean;
   autoOpenDownloadDir: boolean;
+  downloadZoomStrategy: "current" | "fixed";
+  downloadFixedZoom: number;
 }
 
 interface CustomSource {
@@ -354,6 +356,60 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       ))}
                     </select>
                   </div>
+                </div>
+              </div>
+
+              {/* Default Download Settings */}
+              <div className="space-y-3 border-t pt-4">
+                <label className="text-sm font-medium">Default Download Settings</label>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                     <label className="text-xs text-muted-foreground block">Download Zoom Strategy</label>
+                     <div className="flex gap-4">
+                       <label className="flex items-center gap-2 cursor-pointer">
+                         <input
+                           type="radio"
+                           name="zoomStrategy"
+                           checked={settings.downloadZoomStrategy === "current"}
+                           onChange={() => setSettings({ ...settings, downloadZoomStrategy: "current" })}
+                           className="w-4 h-4 text-primary border-border focus:ring-primary"
+                         />
+                         <span className="text-sm">Use Current Map Zoom</span>
+                       </label>
+                       <label className="flex items-center gap-2 cursor-pointer">
+                         <input
+                           type="radio"
+                           name="zoomStrategy"
+                           checked={settings.downloadZoomStrategy === "fixed" || !settings.downloadZoomStrategy}
+                           onChange={() => setSettings({ ...settings, downloadZoomStrategy: "fixed" })}
+                           className="w-4 h-4 text-primary border-border focus:ring-primary"
+                         />
+                         <span className="text-sm">Use Fixed Zoom Level</span>
+                       </label>
+                     </div>
+                  </div>
+
+                  {(settings.downloadZoomStrategy === "fixed" || !settings.downloadZoomStrategy) && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-xs text-muted-foreground">Fixed Zoom Level</label>
+                        <span className="text-xs font-mono">{settings.downloadFixedZoom || 19}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="20"
+                        step="1"
+                        value={settings.downloadFixedZoom || 19}
+                        onChange={(e) => setSettings({ ...settings, downloadFixedZoom: parseInt(e.target.value) })}
+                        className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Always download imagery at this zoom level, regardless of map view.
+                        Zoom 19 is high resolution (~30cm/pixel).
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 

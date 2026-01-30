@@ -36,10 +36,14 @@ type UserSettings struct {
 	CacheTTLDays   int `json:"cacheTTLDays"`
 
 	// Default map settings
-	DefaultZoom          int    `json:"defaultZoom"`
-	DefaultSource        string `json:"defaultSource"` // "esri", "google", or custom source name
-	DefaultCenterLat     float64 `json:"defaultCenterLat"`
-	DefaultCenterLon     float64 `json:"defaultCenterLon"`
+	DefaultZoom      int     `json:"defaultZoom"`
+	DefaultSource    string  `json:"defaultSource"` // "esri", "google", or custom source name
+	DefaultCenterLat float64 `json:"defaultCenterLat"`
+	DefaultCenterLon float64 `json:"defaultCenterLon"`
+
+	// Download settings
+	DownloadZoomStrategy string `json:"downloadZoomStrategy"` // "current" or "fixed"
+	DownloadFixedZoom    int    `json:"downloadFixedZoom"`
 
 	// Custom imagery sources
 	CustomSources []CustomSource `json:"customSources"`
@@ -61,14 +65,16 @@ func DefaultSettings() *UserSettings {
 	downloadPath := filepath.Join(homeDir, "Downloads", "imagery")
 
 	return &UserSettings{
-		DownloadPath:   downloadPath,
-		CacheMaxSizeMB: 250,
-		CacheTTLDays:   30,
-		DefaultZoom:    10,
-		DefaultSource:  "esri",
-		DefaultCenterLat: 30.0444, // Cairo, Egypt
-		DefaultCenterLon: 31.2357,
-		CustomSources:    []CustomSource{},
+		DownloadPath:         downloadPath,
+		CacheMaxSizeMB:       250,
+		CacheTTLDays:         30,
+		DefaultZoom:          10,
+		DefaultSource:        "esri",
+		DefaultCenterLat:     30.0444, // Cairo, Egypt
+		DefaultCenterLon:     31.2357,
+		DownloadZoomStrategy: "fixed",
+		DownloadFixedZoom:    19,
+		CustomSources:        []CustomSource{},
 		DateFilterPatterns: []DateFilterPattern{
 			{
 				Name:    "Recent (Last 5 Years)",
@@ -163,6 +169,12 @@ func LoadSettings() (*UserSettings, error) {
 	}
 	if settings.Theme == "" {
 		settings.Theme = defaults.Theme
+	}
+	if settings.DownloadZoomStrategy == "" {
+		settings.DownloadZoomStrategy = defaults.DownloadZoomStrategy
+	}
+	if settings.DownloadFixedZoom == 0 {
+		settings.DownloadFixedZoom = defaults.DownloadFixedZoom
 	}
 
 	return &settings, nil

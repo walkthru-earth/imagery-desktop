@@ -56,6 +56,25 @@ export function ExportDialog({
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportComplete, setExportComplete] = useState(false);
+  const [exportZoom, setExportZoom] = useState(zoom);
+
+  // Initialize zoom based on settings
+  React.useEffect(() => {
+    if (isOpen) {
+      if ((window as any).go?.main?.App?.GetSettings) {
+        (window as any).go.main.App.GetSettings().then((settings: any) => {
+          if (settings.downloadZoomStrategy === "fixed" && settings.downloadFixedZoom) {
+            setExportZoom(settings.downloadFixedZoom);
+          } else {
+            setExportZoom(zoom);
+          }
+        }).catch((err: any) => {
+          console.error("Failed to load settings:", err);
+          setExportZoom(zoom);
+        });
+      }
+    }
+  }, [isOpen, zoom]);
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -93,7 +112,7 @@ export function ExportDialog({
         // Multi-date export
         if (source === "esri") {
           const dates = dateRange.map(d => d.date);
-          await api.downloadEsriImageryRange(bbox, zoom, dates, format);
+          await api.downloadEsriImageryRange(bbox, exportZoom, dates, format);
         } else {
           // Google Earth range
           const geDates: GEDateInfo[] = dateRange.map(d => ({
@@ -101,7 +120,7 @@ export function ExportDialog({
             hexDate: d.hexDate || "",
             epoch: d.epoch || 0,
           }));
-          await api.downloadGoogleEarthHistoricalImageryRange(bbox, zoom, geDates, format);
+          await api.downloadGoogleEarthHistoricalImageryRange(bbox, exportZoom, geDates, format);
         }
 
         // TODO: Video export if requested
@@ -112,11 +131,11 @@ export function ExportDialog({
       } else {
         // Single date export
         if (source === "esri" && singleDate) {
-          await api.downloadEsriImagery(bbox, zoom, singleDate, format);
+          await api.downloadEsriImagery(bbox, exportZoom, singleDate, format);
         } else if (source === "google" && singleHexDate !== undefined && singleEpoch !== undefined && singleDate) {
           await api.downloadGoogleEarthHistoricalImagery(
             bbox,
-            zoom,
+            exportZoom,
             singleHexDate,
             singleEpoch,
             singleDate,
@@ -155,7 +174,7 @@ export function ExportDialog({
               Export {isRangeMode ? `${dateRange.length} Dates` : "Imagery"}
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              {source === "esri" ? "Esri Wayback" : "Google Earth"} • Zoom {zoom}
+              {source === "esri" ? "Esri Wayback" : "Google Earth"}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} disabled={isExporting}>
@@ -197,6 +216,31 @@ export function ExportDialog({
               • <strong>Tiles</strong>: Individual JPEG tiles{" "}
               • <strong>GeoTIFF</strong>: Merged, georeferenced TIFF (EPSG:3857){" "}
               • <strong>Both</strong>: Save tiles and GeoTIFF
+            </p>
+          </div>
+
+          {/* Zoom Level Selection */}
+          <div className="space-y-3 border-t pt-4">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-medium">Export Zoom Level</label>
+              <span className="text-sm font-mono bg-muted px-2 py-0.5 rounded">{exportZoom}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-xs text-muted-foreground w-8">Low</span>
+              <input
+                type="range"
+                min="1"
+                max="20"
+                step="1"
+                value={exportZoom}
+                onChange={(e) => setExportZoom(parseInt(e.target.value))}
+                disabled={isExporting}
+                className="flex-1 h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+              <span className="text-xs text-muted-foreground w-8">High</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Current Map Zoom: {zoom} • Download Zoom: {exportZoom}
             </p>
           </div>
 
