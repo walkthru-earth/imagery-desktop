@@ -25,8 +25,11 @@ import (
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"imagery-desktop/internal/cache"
+	"imagery-desktop/internal/config"
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
+	"imagery-desktop/internal/imagery"
 )
 
 // ImagerySource represents the source of imagery
@@ -40,6 +43,14 @@ const (
 	DownloadWorkers = 10
 	TileSize        = 256
 )
+
+// Helper function for max of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // BoundingBox represents a geographic bounding box
 type BoundingBox struct {
@@ -76,22 +87,45 @@ type App struct {
 	ctx           context.Context
 	geClient      *googleearth.Client
 	esriClient    *esri.Client
+	tileCache     *cache.TileCache
+	downloader    *imagery.TileDownloader
 	downloadPath  string
 	tileServerURL string
+	settings      *config.UserSettings
 	mu            sync.Mutex
 	devMode       bool // Enable verbose logging in dev mode only
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	// Default download path to user's Downloads folder
-	homeDir, _ := os.UserHomeDir()
-	downloadPath := filepath.Join(homeDir, "Downloads", "imagery")
+	// Load user settings
+	settings, err := config.LoadSettings()
+	if err != nil {
+		log.Printf("Failed to load settings, using defaults: %v", err)
+		settings = config.DefaultSettings()
+	}
+	log.Printf("Settings loaded from: %s", config.GetSettingsPath())
+
+	// Initialize cache with settings
+	cacheDir := cache.GetCacheDir()
+	tileCache, err := cache.NewTileCache(cacheDir, settings.CacheMaxSizeMB)
+	if err != nil {
+		log.Printf("Failed to initialize tile cache: %v", err)
+		tileCache = nil // Continue without cache
+	} else {
+		log.Printf("Tile cache initialized at %s (max %d MB)", cacheDir, settings.CacheMaxSizeMB)
+	}
+
+	// Initialize unified downloader
+	downloader := imagery.NewTileDownloader(DownloadWorkers, tileCache)
 
 	return &App{
 		geClient:     googleearth.NewClient(),
 		esriClient:   esri.NewClient(),
-		downloadPath: downloadPath,
+		tileCache:    tileCache,
+		downloader:   downloader,
+		downloadPath: settings.DownloadPath,
+		settings:     settings,
 	}
 }
 
@@ -457,6 +491,12 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		Status:     "Complete",
 	})
 
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
+
 	return nil
 }
 
@@ -663,6 +703,12 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		Status:     "Complete",
 	})
 
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
+
 	return nil
 }
 
@@ -757,6 +803,12 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 	})
 
 	a.emitLog(fmt.Sprintf("Bulk download complete: %d unique, %d skipped", downloadedCount, skippedCount))
+
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
 
 	return nil
 }
@@ -899,9 +951,27 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			data, err := a.geClient.FetchTile(tile)
-			if err != nil {
-				continue
+			// Try cache first
+			cacheKey := fmt.Sprintf("ge:%s:current", tile.Path)
+			var data []byte
+
+			if a.tileCache != nil {
+				if cachedData, found := a.tileCache.Get(cacheKey); found {
+					data = cachedData
+				}
+			}
+
+			// Fetch from source if not cached
+			if data == nil {
+				data, err = a.geClient.FetchTile(tile)
+				if err != nil {
+					continue
+				}
+
+				// Cache the result
+				if a.tileCache != nil {
+					a.tileCache.Set(cacheKey, data)
+				}
 			}
 
 			img, _, err := image.Decode(bytes.NewReader(data))
@@ -1113,20 +1183,29 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Try to fetch historical tiles, with fallback to lower zoom levels
-	// Historical imagery may not be available at high zoom levels (16+)
+	// Try to fetch historical tiles with smart zoom fallback
+	// Strategy: Try harder at requested zoom before falling back (epoch fallback happens per tile)
 	geTiles := make(map[string]image.Image)
 	sourceZoom := z
 
 	// Get geographic bounds of the requested Web Mercator tile (fixed for all attempts)
 	south, west, north, east := googleearth.WebMercatorTileBounds(x, y, z)
 
-	for tryZoom := z; tryZoom >= 10 && len(geTiles) == 0; tryZoom-- {
+	// Smart fallback: only try z, z-1, z-2, z-3 (instead of all the way to 10)
+	// High zoom tiles (17-19) usually exist with the right epoch (358 for 2025+)
+	// fetchHistoricalGETile already has three-layer epoch fallback, so give it a chance
+	maxFallback := 3
+	if z <= 16 {
+		maxFallback = 6 // More aggressive fallback for lower zooms where coverage is sparser
+	}
+
+	for tryZoom := z; tryZoom >= max(z-maxFallback, 10) && len(geTiles) == 0; tryZoom-- {
 		// Find GE tiles at tryZoom that cover the same geographic area
 		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
 
 		log.Printf("[GEHistorical] z=%d x=%d y=%d: trying zoom %d, need %d tiles", z, x, y, tryZoom, len(requiredTiles))
 
+		successCount := 0
 		for _, tc := range requiredTiles {
 			tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
 			if err != nil {
@@ -1134,10 +1213,30 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 				continue
 			}
 
-			data, err := a.fetchHistoricalGETile(tile, hexDate)
-			if err != nil {
-				log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
-				continue
+			// Try cache first
+			cacheKey := fmt.Sprintf("ge:%s:%s", tile.Path, hexDate)
+			var data []byte
+
+			if a.tileCache != nil {
+				if cachedData, found := a.tileCache.Get(cacheKey); found {
+					data = cachedData
+					successCount++
+				}
+			}
+
+			// Fetch from source if not cached (with full epoch fallback)
+			if data == nil {
+				data, err = a.fetchHistoricalGETile(tile, hexDate)
+				if err != nil {
+					log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
+					continue
+				}
+
+				// Cache the successful result
+				if a.tileCache != nil {
+					a.tileCache.Set(cacheKey, data)
+				}
+				successCount++
 			}
 
 			img, _, err := image.Decode(bytes.NewReader(data))
@@ -1155,9 +1254,11 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 		if len(geTiles) > 0 {
 			sourceZoom = tryZoom
 			if tryZoom < z {
-				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d (got %d/%d tiles at original zoom)",
+				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d (got %d/%d tiles)",
 					z, x, y, hexDate, tryZoom, len(geTiles), len(requiredTiles))
 			}
+			// Early exit - we got tiles, stop trying lower zooms
+			break
 		}
 	}
 
@@ -1585,6 +1686,12 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		Status:     "Complete",
 	})
 
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
+
 	return nil
 }
 
@@ -1625,6 +1732,12 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 		Percent:    100,
 		Status:     fmt.Sprintf("Downloaded %d dates", total),
 	})
+
+	// Auto-open download folder
+	a.emitLog("Opening download folder...")
+	if err := a.OpenDownloadFolder(); err != nil {
+		log.Printf("Failed to open download folder: %v", err)
+	}
 
 	return nil
 }

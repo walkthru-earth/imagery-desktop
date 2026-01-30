@@ -1,38 +1,19 @@
-// Bounding Box
-export interface BoundingBox {
-  south: number;
-  west: number;
-  north: number;
-  east: number;
-}
+// Re-export Wails-generated types
+export { main } from "../../wailsjs/go/models";
 
-// Tile Information
-export interface TileInfo {
-  tileCount: number;
-  zoomLevel: number;
-  resolution: number;
-  estSizeMB: number;
-}
+// Use Wails BoundingBox instead of redefining
+export type BoundingBox = import("../../wailsjs/go/models").main.BoundingBox;
+export type TileInfo = import("../../wailsjs/go/models").main.TileInfo;
+export type AvailableDate = import("../../wailsjs/go/models").main.AvailableDate;
+export type GEAvailableDate = import("../../wailsjs/go/models").main.GEAvailableDate;
+export type GEDateInfo = import("../../wailsjs/go/models").main.GEDateInfo;
 
-// Download Progress
+// Download Progress (custom frontend type)
 export interface DownloadProgress {
   downloaded: number;
   total: number;
   percent: number;
   status: string;
-}
-
-// Esri Date
-export interface AvailableDate {
-  date: string;
-  source: string;
-}
-
-// Google Earth Date
-export interface GEAvailableDate {
-  date: string;
-  epoch: number;
-  hexDate: string;
 }
 
 // Imagery Source

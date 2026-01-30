@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -180,59 +181,95 @@ func (c *Client) GetAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
 		}
 	}
 
-	var result []*DatedTile
-	var skipUntil *int
-	var lastDate *time.Time
-	var lastLayer *Layer
-
 	c.mu.RLock()
 	layers := c.layerList
 	c.mu.RUnlock()
 
-	for _, layer := range layers {
-		if skipUntil != nil {
-			if layer.ID == *skipUntil {
-				skipUntil = nil
+	// Parallel processing with worker pool (10 workers)
+	workerCount := 10
+	layerChan := make(chan *Layer, len(layers))
+	type layerResult struct {
+		layer *Layer
+		date  time.Time
+		available bool
+	}
+	resultChan := make(chan layerResult, len(layers))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for layer := range layerChan {
+				// Check tilemap for availability
+				tileMapURL := layer.GetTileMapURL(tile)
+				available, _, err := c.checkTileMap(tileMapURL)
+				if err != nil || !available {
+					resultChan <- layerResult{layer: layer, available: false}
+					continue
+				}
+
+				// Get actual capture date for this tile
+				date, err := c.getTileDate(layer, tile)
+				if err != nil {
+					date = layer.Date
+				}
+
+				resultChan <- layerResult{layer: layer, date: date, available: true}
 			}
-			continue
-		}
+		}()
+	}
 
-		// Check tilemap for availability
-		tileMapURL := layer.GetTileMapURL(tile)
-		available, nextID, err := c.checkTileMap(tileMapURL)
-		if err != nil {
-			continue
+	// Send layers to workers
+	go func() {
+		for _, layer := range layers {
+			layerChan <- layer
 		}
+		close(layerChan)
+	}()
 
-		if nextID > 0 {
-			skipUntil = &nextID
-			layer = c.layers[nextID]
+	// Wait for workers in background
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results (maintaining order by layer ID for consistency)
+	results := make([]layerResult, 0, len(layers))
+	for res := range resultChan {
+		if res.available {
+			results = append(results, res)
 		}
+	}
 
-		if available {
-			// Get actual capture date for this tile
-			date, err := c.getTileDate(layer, tile)
-			if err != nil {
-				date = layer.Date
-			}
+	// Sort by layer ID (newest first, as layers are ordered)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].layer.ID > results[j].layer.ID
+	})
 
-			if lastDate != nil && lastLayer != nil && !lastDate.Equal(date) {
-				// Emit previous layer when date changes
-				result = append(result, &DatedTile{
-					Tile:        tile,
-					Layer:       lastLayer,
-					CaptureDate: *lastDate,
-					LayerDate:   lastLayer.Date,
-				})
-			}
-			lastDate = &date
-			lastLayer = layer
+	// Build dated tiles, grouping by unique dates
+	var datedTiles []*DatedTile
+	var lastDate *time.Time
+	var lastLayer *Layer
+
+	for _, res := range results {
+		if lastDate != nil && lastLayer != nil && !lastDate.Equal(res.date) {
+			// Emit previous layer when date changes
+			datedTiles = append(datedTiles, &DatedTile{
+				Tile:        tile,
+				Layer:       lastLayer,
+				CaptureDate: *lastDate,
+				LayerDate:   lastLayer.Date,
+			})
 		}
+		lastDate = &res.date
+		lastLayer = res.layer
 	}
 
 	// Emit last layer
 	if lastDate != nil && lastLayer != nil {
-		result = append(result, &DatedTile{
+		datedTiles = append(datedTiles, &DatedTile{
 			Tile:        tile,
 			Layer:       lastLayer,
 			CaptureDate: *lastDate,
@@ -240,7 +277,7 @@ func (c *Client) GetAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
 		})
 	}
 
-	return result, nil
+	return datedTiles, nil
 }
 
 // GetNearestDatedTile finds the closest tile to a desired date

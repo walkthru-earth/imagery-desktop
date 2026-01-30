@@ -6,6 +6,11 @@
 import {
   GetTileInfo,
   GetEsriLayers,
+  GetEsriTileURL,
+  GetGoogleEarthTileURL,
+  GetGoogleEarthDatesForArea,
+  GetGoogleEarthHistoricalTileURL,
+  GetAvailableDatesForArea,
   DownloadEsriImagery,
   DownloadEsriImageryRange,
   DownloadGoogleEarthImagery,
@@ -13,46 +18,95 @@ import {
   DownloadGoogleEarthHistoricalImageryRange,
   SelectDownloadFolder,
   GetDownloadPath,
+  SetDownloadPath,
   OpenDownloadFolder,
-  GetEsriTileURL,
-  GetGoogleEarthTileURL,
-  GetGoogleEarthDatesForArea,
-  GetGoogleEarthHistoricalTileURL,
+  StartTileServer,
 } from "../../wailsjs/go/main/App";
+import { main } from "../../wailsjs/go/models";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import type { BoundingBox } from "@/types";
 
+// Re-export types from models
+export type { main };
+
+// Helper to create BoundingBox from coordinates
+export const createBoundingBox = (south: number, west: number, north: number, east: number): main.BoundingBox => {
+  return new main.BoundingBox({ south, west, north, east });
+};
+
+// API wrapper with correct signatures matching Wails bindings
 export const api = {
   // Tile Information
-  getTileInfo: (bbox: BoundingBox, zoom: number) => GetTileInfo(bbox.south, bbox.west, bbox.north, bbox.east, zoom),
+  getTileInfo: (bbox: main.BoundingBox, zoom: number) =>
+    GetTileInfo(bbox, zoom),
 
   // Esri Wayback
-  getEsriLayers: () => GetEsriLayers(),
-  getEsriTileURL: (date: string, x: number, y: number, z: number) => GetEsriTileURL(date, x, y, z),
-  downloadEsriImagery: (bbox: BoundingBox, date: string, zoom: number, format: string) =>
-    DownloadEsriImagery(bbox.south, bbox.west, bbox.north, bbox.east, date, zoom, format),
-  downloadEsriImageryRange: (bbox: BoundingBox, dates: string[], zoom: number, format: string) =>
-    DownloadEsriImageryRange(bbox.south, bbox.west, bbox.north, bbox.east, dates, zoom, format),
+  getEsriLayers: () =>
+    GetEsriLayers(),
 
-  // Google Earth
-  getGoogleEarthTileURL: (x: number, y: number, z: number) => GetGoogleEarthTileURL(x, y, z),
-  getGoogleEarthDatesForArea: (bbox: BoundingBox, zoom: number) =>
-    GetGoogleEarthDatesForArea(bbox.south, bbox.west, bbox.north, bbox.east, zoom),
-  getGoogleEarthHistoricalTileURL: (quadtree: string, epoch: number, hexDate: string) =>
-    GetGoogleEarthHistoricalTileURL(quadtree, epoch, hexDate),
-  downloadGoogleEarthImagery: (bbox: BoundingBox, zoom: number, format: string) =>
-    DownloadGoogleEarthImagery(bbox.south, bbox.west, bbox.north, bbox.east, zoom, format),
-  downloadGoogleEarthHistoricalImagery: (bbox: BoundingBox, hexDate: string, zoom: number, format: string) =>
-    DownloadGoogleEarthHistoricalImagery(bbox.south, bbox.west, bbox.north, bbox.east, hexDate, zoom, format),
-  downloadGoogleEarthHistoricalImageryRange: (bbox: BoundingBox, hexDates: string[], zoom: number, format: string) =>
-    DownloadGoogleEarthHistoricalImageryRange(bbox.south, bbox.west, bbox.north, bbox.east, hexDates, zoom, format),
+  getEsriTileURL: (date: string) =>
+    GetEsriTileURL(date),
+
+  downloadEsriImagery: (bbox: main.BoundingBox, zoom: number, date: string, format: string) =>
+    DownloadEsriImagery(bbox, zoom, date, format),
+
+  downloadEsriImageryRange: (bbox: main.BoundingBox, zoom: number, dates: string[], format: string) =>
+    DownloadEsriImageryRange(bbox, zoom, dates, format),
+
+  // Google Earth Current
+  getGoogleEarthTileURL: () =>
+    GetGoogleEarthTileURL(),
+
+  downloadGoogleEarthImagery: (bbox: main.BoundingBox, zoom: number, format: string) =>
+    DownloadGoogleEarthImagery(bbox, zoom, format),
+
+  // Google Earth Historical
+  getGoogleEarthDatesForArea: (bbox: main.BoundingBox, zoom: number) =>
+    GetGoogleEarthDatesForArea(bbox, zoom),
+
+  getGoogleEarthHistoricalTileURL: (quadtree: string, epoch: number) =>
+    GetGoogleEarthHistoricalTileURL(quadtree, epoch),
+
+  downloadGoogleEarthHistoricalImagery: (
+    bbox: main.BoundingBox,
+    zoom: number,
+    hexDate: string,
+    epoch: number,
+    dateStr: string,
+    format: string
+  ) => DownloadGoogleEarthHistoricalImagery(bbox, zoom, hexDate, epoch, dateStr, format),
+
+  downloadGoogleEarthHistoricalImageryRange: (
+    bbox: main.BoundingBox,
+    zoom: number,
+    dates: main.GEDateInfo[],
+    format: string
+  ) => DownloadGoogleEarthHistoricalImageryRange(bbox, zoom, dates, format),
+
+  // General Date Query
+  getAvailableDatesForArea: (bbox: main.BoundingBox, zoom: number) =>
+    GetAvailableDatesForArea(bbox, zoom),
 
   // Download Management
-  selectDownloadFolder: () => SelectDownloadFolder(),
-  getDownloadPath: () => GetDownloadPath(),
-  openDownloadFolder: () => OpenDownloadFolder(),
+  selectDownloadFolder: () =>
+    SelectDownloadFolder(),
+
+  getDownloadPath: () =>
+    GetDownloadPath(),
+
+  setDownloadPath: (path: string) =>
+    SetDownloadPath(path),
+
+  openDownloadFolder: () =>
+    OpenDownloadFolder(),
+
+  // Tile Server
+  startTileServer: () =>
+    StartTileServer(),
 
   // Events
-  onDownloadProgress: (callback: (progress: any) => void) => EventsOn("download-progress", callback),
-  onLog: (callback: (log: string) => void) => EventsOn("log", callback),
+  onDownloadProgress: (callback: (progress: any) => void) =>
+    EventsOn("download-progress", callback),
+
+  onLog: (callback: (log: string) => void) =>
+    EventsOn("log", callback),
 };
