@@ -39,7 +39,7 @@ function SingleViewTimeline({ onExport }: { onExport?: () => void }) {
 
   return (
     <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
-      <CardContent className="p-3 space-y-2">
+      <CardContent className="p-2 space-y-1">
         {/* Source Selector and Export */}
         <div className="flex gap-2 items-center">
           <SourceSelector
@@ -226,7 +226,7 @@ export function MapControls({
     return (
       <div
         className={cn(
-          "absolute bottom-4 left-1/2 -translate-x-1/2 z-10",
+          "absolute bottom-8 left-1/2 -translate-x-1/2 z-10",
           "w-[800px]",
           className
         )}
