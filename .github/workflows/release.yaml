@@ -76,15 +76,9 @@ jobs:
         run: |
           VERSION="${{ needs.get-version.outputs.version }}"
           echo "Injecting version $VERSION into wails.json"
-          # Use a temporary file for sed on macOS/Linux to avoid issues with in-place editing
-          # and handle Windows differently.
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            # Windows sed usage or simple replace
-            sed -i "s/\"productVersion\": \".*\"/\"productVersion\": \"$VERSION\"/" wails.json
-          else
-            sed -i.bak "s/\"productVersion\": \".*\"/\"productVersion\": \"$VERSION\"/" wails.json
-            rm wails.json.bak
-          fi
+          # Use jq to update the JSON file safely across platforms
+          echo "Using jq to set productVersion to $VERSION"
+          jq --arg v "$VERSION" '.productVersion = $v' wails.json > wails.json.tmp && mv wails.json.tmp wails.json
 
       - name: Build
         shell: bash
