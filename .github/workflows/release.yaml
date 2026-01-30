@@ -63,14 +63,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Update wails.json Version
-        shell: bash
-        run: |
-          VERSION="${{ needs.get-version.outputs.version }}"
-          echo "Updating wails.json to version $VERSION"
-          # Use jq if available or simple sed
-          sed -i 's/"productVersion": ".*"/"productVersion": "'$VERSION'"/' wails.json
-
       - name: Inject Version
         shell: bash
         run: |
