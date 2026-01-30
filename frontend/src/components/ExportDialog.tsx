@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useState } from "react";
-import { X, Download, FolderOpen } from "lucide-react";
+import { X, Download, FolderOpen, Film, Settings2 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/services/api";
@@ -31,6 +31,26 @@ export interface ExportDialogProps {
   dateRange?: Array<{ date: string; hexDate?: string; epoch?: number }>;
 }
 
+// Video presets with dimensions
+const VIDEO_PRESETS = [
+  { id: "youtube", label: "YouTube (1920×1080)", width: 1920, height: 1080 },
+  { id: "instagram_square", label: "Instagram Square (1080×1080)", width: 1080, height: 1080 },
+  { id: "instagram_portrait", label: "Instagram Portrait (1080×1350)", width: 1080, height: 1350 },
+  { id: "instagram_reel", label: "Instagram Reel (1080×1920)", width: 1080, height: 1920 },
+  { id: "tiktok", label: "TikTok (1080×1920)", width: 1080, height: 1920 },
+  { id: "youtube_shorts", label: "YouTube Shorts (1080×1920)", width: 1080, height: 1920 },
+  { id: "twitter", label: "Twitter/X (1280×720)", width: 1280, height: 720 },
+  { id: "facebook", label: "Facebook (1280×720)", width: 1280, height: 720 },
+];
+
+const DATE_POSITIONS = [
+  { id: "bottom-right", label: "Bottom Right" },
+  { id: "bottom-left", label: "Bottom Left" },
+  { id: "top-right", label: "Top Right" },
+  { id: "top-left", label: "Top Left" },
+  { id: "center", label: "Center" },
+];
+
 export function ExportDialog({
   isOpen,
   onClose,
@@ -48,11 +68,25 @@ export function ExportDialog({
   const [includeVideo, setIncludeVideo] = useState(false);
   const [videoFormat, setVideoFormat] = useState<"mp4" | "gif">("mp4");
 
+  // Video settings
+  const [videoPreset, setVideoPreset] = useState("youtube");
+  const [frameDelay, setFrameDelay] = useState(0.5); // seconds per frame
+  const [showDateOverlay, setShowDateOverlay] = useState(true);
+  const [datePosition, setDatePosition] = useState("bottom-right");
+  const [videoQuality, setVideoQuality] = useState(90);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Crop position (0-1, where 0.5 is center)
+  const [cropX, setCropX] = useState(0.5);
+  const [cropY, setCropY] = useState(0.5);
+
   const [progress, setProgress] = useState<{
     downloaded: number;
     total: number;
     percent: number;
     status: string;
+    currentDate?: number;
+    totalDates?: number;
   } | null>(null);
 
   const [isExporting, setIsExporting] = useState(false);
@@ -101,6 +135,9 @@ export function ExportDialog({
     };
   }, []);
 
+  // Get current preset dimensions
+  const currentPreset = VIDEO_PRESETS.find(p => p.id === videoPreset) || VIDEO_PRESETS[0];
+
   const handleExport = async () => {
     if (!bbox) return;
 
@@ -142,22 +179,24 @@ export function ExportDialog({
               status: "Starting video export..."
             });
 
-            // Prepare video export options with sensible defaults
+            // Prepare video export options
             const videoOpts = new main.VideoExportOptions({
-              width: 1920,
-              height: 1080,
-              preset: "youtube", // Default preset
+              width: currentPreset.width,
+              height: currentPreset.height,
+              preset: videoPreset,
+              cropX: cropX,
+              cropY: cropY,
               spotlightEnabled: false,
               spotlightCenterLat: 0,
               spotlightCenterLon: 0,
               spotlightRadiusKm: 1.0,
               overlayOpacity: 0.6,
-              showDateOverlay: true,
+              showDateOverlay: showDateOverlay,
               dateFontSize: 48,
-              datePosition: "bottom-right",
-              frameDelay: 0.5, // 2 images per second
+              datePosition: datePosition,
+              frameDelay: frameDelay,
               outputFormat: videoFormat,
-              quality: 90,
+              quality: videoQuality,
             });
 
             // Convert dateRange to proper GEDateInfo array
@@ -172,7 +211,13 @@ export function ExportDialog({
               zoom: exportZoom,
               dateCount: geDatesForVideo.length,
               source: source === "esri" ? "esri" : "ge_historical",
-              videoOpts,
+              videoOpts: {
+                preset: videoPreset,
+                dimensions: `${currentPreset.width}x${currentPreset.height}`,
+                frameDelay,
+                showDateOverlay,
+                datePosition,
+              },
               dates: geDatesForVideo.map(d => d.date)
             });
 
@@ -242,8 +287,8 @@ export function ExportDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <Card className="w-full max-w-2xl mx-4">
-        <CardHeader className="flex flex-row items-center justify-between border-b">
+      <Card className="w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <CardHeader className="flex flex-row items-center justify-between border-b sticky top-0 bg-card z-10">
           <div>
             <h2 className="text-xl font-semibold">
               Export {isRangeMode ? `${dateRange.length} Dates` : "Imagery"}
@@ -321,7 +366,7 @@ export function ExportDialog({
 
           {/* Video Export Options (Range Mode Only) */}
           {isRangeMode && (
-            <div className="space-y-3 border-t pt-4">
+            <div className="space-y-4 border-t pt-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -330,49 +375,258 @@ export function ExportDialog({
                   disabled={isExporting}
                   className="w-4 h-4 rounded border-border accent-primary"
                 />
+                <Film className="h-4 w-4" />
                 <span className="text-sm font-medium">Create Timelapse Video</span>
               </label>
 
               {includeVideo && (
-                <div className="flex gap-3 ml-6">
-                  <Button
-                    variant={videoFormat === "mp4" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setVideoFormat("mp4")}
-                    disabled={isExporting}
+                <div className="space-y-4 ml-6 p-4 bg-muted/50 rounded-lg">
+                  {/* Video Format */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Video Format</label>
+                    <div className="flex gap-2">
+                      <Button
+                        variant={videoFormat === "mp4" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setVideoFormat("mp4")}
+                        disabled={isExporting}
+                      >
+                        MP4 (H.264)
+                      </Button>
+                      <Button
+                        variant={videoFormat === "gif" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setVideoFormat("gif")}
+                        disabled={isExporting}
+                      >
+                        GIF
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      MP4 uses H.264 codec for best quality and compatibility
+                    </p>
+                  </div>
+
+                  {/* Video Preset */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Dimensions</label>
+                    <select
+                      value={videoPreset}
+                      onChange={(e) => setVideoPreset(e.target.value)}
+                      disabled={isExporting}
+                      className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                    >
+                      {VIDEO_PRESETS.map(preset => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Frame Delay */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-sm font-medium">Frame Duration</label>
+                      <span className="text-sm font-mono bg-background px-2 py-0.5 rounded">
+                        {frameDelay.toFixed(1)}s
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="3"
+                      step="0.1"
+                      value={frameDelay}
+                      onChange={(e) => setFrameDelay(parseFloat(e.target.value))}
+                      disabled={isExporting}
+                      className="w-full h-2 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      How long each frame shows ({(1/frameDelay).toFixed(1)} frames per second)
+                    </p>
+                  </div>
+
+                  {/* Date Overlay Toggle */}
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showDateOverlay}
+                        onChange={(e) => setShowDateOverlay(e.target.checked)}
+                        disabled={isExporting}
+                        className="w-4 h-4 rounded border-border accent-primary"
+                      />
+                      <span className="text-sm">Show Date Overlay</span>
+                    </label>
+                    {showDateOverlay && (
+                      <select
+                        value={datePosition}
+                        onChange={(e) => setDatePosition(e.target.value)}
+                        disabled={isExporting}
+                        className="h-8 px-2 rounded-md border border-input bg-background text-xs"
+                      >
+                        {DATE_POSITIONS.map(pos => (
+                          <option key={pos.id} value={pos.id}>
+                            {pos.label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Advanced Settings Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                   >
-                    MP4
-                  </Button>
-                  <Button
-                    variant={videoFormat === "gif" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setVideoFormat("gif")}
-                    disabled={isExporting}
-                  >
-                    GIF
-                  </Button>
+                    <Settings2 className="h-3 w-3" />
+                    {showAdvanced ? "Hide" : "Show"} Advanced Settings
+                  </button>
+
+                  {showAdvanced && (
+                    <div className="space-y-3 pt-2 border-t border-border/50">
+                      {/* Quality Slider */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="text-sm font-medium">Quality</label>
+                          <span className="text-sm font-mono bg-background px-2 py-0.5 rounded">
+                            {videoQuality}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="50"
+                          max="100"
+                          step="5"
+                          value={videoQuality}
+                          onChange={(e) => setVideoQuality(parseInt(e.target.value))}
+                          disabled={isExporting}
+                          className="w-full h-2 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
+                        />
+                      </div>
+
+                      {/* Crop Position Controls */}
+                      <div className="space-y-3 pt-2">
+                        <label className="text-sm font-medium">Crop Position</label>
+                        <p className="text-xs text-muted-foreground">
+                          The video will crop from the source imagery. Adjust where to crop from.
+                        </p>
+
+                        {/* Visual Crop Position Selector */}
+                        <div className="relative w-full aspect-video bg-background rounded-lg border overflow-hidden">
+                          {/* Grid lines */}
+                          <div className="absolute inset-0 grid grid-cols-3 grid-rows-3">
+                            {[...Array(9)].map((_, i) => (
+                              <div
+                                key={i}
+                                className="border border-border/30"
+                              />
+                            ))}
+                          </div>
+
+                          {/* Crop indicator */}
+                          <div
+                            className="absolute w-12 h-12 border-2 border-primary rounded bg-primary/20 transform -translate-x-1/2 -translate-y-1/2 transition-all duration-150 cursor-move"
+                            style={{
+                              left: `${cropX * 100}%`,
+                              top: `${cropY * 100}%`,
+                            }}
+                          />
+
+                          {/* Click to position */}
+                          <div
+                            className="absolute inset-0 cursor-crosshair"
+                            onClick={(e) => {
+                              if (isExporting) return;
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              const x = (e.clientX - rect.left) / rect.width;
+                              const y = (e.clientY - rect.top) / rect.height;
+                              setCropX(Math.max(0, Math.min(1, x)));
+                              setCropY(Math.max(0, Math.min(1, y)));
+                            }}
+                          />
+                        </div>
+
+                        {/* Preset position buttons */}
+                        <div className="flex gap-1 flex-wrap">
+                          {[
+                            { label: "↖", x: 0, y: 0 },
+                            { label: "↑", x: 0.5, y: 0 },
+                            { label: "↗", x: 1, y: 0 },
+                            { label: "←", x: 0, y: 0.5 },
+                            { label: "•", x: 0.5, y: 0.5 },
+                            { label: "→", x: 1, y: 0.5 },
+                            { label: "↙", x: 0, y: 1 },
+                            { label: "↓", x: 0.5, y: 1 },
+                            { label: "↘", x: 1, y: 1 },
+                          ].map(({ label, x, y }) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => {
+                                setCropX(x);
+                                setCropY(y);
+                              }}
+                              disabled={isExporting}
+                              className={`w-8 h-8 text-xs rounded border transition-colors ${
+                                cropX === x && cropY === y
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "bg-background border-border hover:bg-muted"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <p className="text-xs text-muted-foreground">
+                          Position: X={Math.round(cropX * 100)}%, Y={Math.round(cropY * 100)}%
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              <p className="text-xs text-muted-foreground ml-6">
-                Timelapse video showing changes over time
-              </p>
+              {!includeVideo && (
+                <p className="text-xs text-muted-foreground ml-6">
+                  Create a timelapse video showing changes over time
+                </p>
+              )}
             </div>
           )}
 
           {/* Progress Bar */}
           {progress && (
-            <div className="space-y-2 border-t pt-4">
+            <div className="space-y-3 border-t pt-4">
+              {/* Date Range Progress (only shown for multi-date downloads) */}
+              {progress.totalDates && progress.totalDates > 1 && (
+                <div className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2">
+                  <span className="text-sm font-medium">
+                    Downloading Date {progress.currentDate} of {progress.totalDates}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {Math.round((progress.currentDate || 0) / progress.totalDates * 100)}% overall
+                  </span>
+                </div>
+              )}
+
+              {/* Current Task Status */}
               <div className="flex justify-between text-sm">
                 <span className="font-medium">{progress.status}</span>
                 <span className="text-muted-foreground">{progress.percent}%</span>
               </div>
+
+              {/* Tile Progress Bar */}
               <div className="w-full bg-secondary rounded-full h-2 overflow-hidden">
                 <div
                   className="bg-primary h-full transition-all duration-300 ease-out"
                   style={{ width: `${progress.percent}%` }}
                 />
               </div>
+
               {progress.total > 0 && (
                 <p className="text-xs text-muted-foreground">
                   {progress.downloaded} / {progress.total} tiles

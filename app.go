@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
-	"image/jpeg"
-	_ "image/png" // Register PNG decoder
+	"image/jpeg" // For PNG encoding
+	"image/png"
 	"log"
 	"math"
 	"net"
@@ -165,10 +165,12 @@ type TileInfo struct {
 
 // DownloadProgress represents download progress
 type DownloadProgress struct {
-	Downloaded int    `json:"downloaded"`
-	Total      int    `json:"total"`
-	Percent    int    `json:"percent"`
-	Status     string `json:"status"`
+	Downloaded  int    `json:"downloaded"`
+	Total       int    `json:"total"`
+	Percent     int    `json:"percent"`
+	Status      string `json:"status"`
+	CurrentDate int    `json:"currentDate"` // Current date index in range download (1-based)
+	TotalDates  int    `json:"totalDates"`  // Total dates in range download
 }
 
 // App struct
@@ -570,10 +572,12 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		}
 
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: int(count),
-			Total:      total,
-			Percent:    percent,
-			Status:     status,
+			Downloaded:  int(count),
+			Total:       total,
+			Percent:     percent,
+			Status:      status,
+			CurrentDate: a.currentDateIndex,
+			TotalDates:  a.totalDatesInRange,
 		})
 
 		if result.err != nil {
@@ -651,6 +655,9 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		}
 
 		a.emitLog(fmt.Sprintf("Saved: %s", tifPath))
+
+		// Save PNG copy for video export compatibility
+		a.savePNGCopy(outputImg, tifPath)
 	}
 
 	if format == "tiles" || format == "both" {
@@ -680,6 +687,25 @@ func (a *App) saveAsGeoTIFF(img image.Image, outputPath string, originX, originY
 	return a.saveAsGeoTIFFWithMetadata(img, outputPath, originX, originY, pixelWidth, pixelHeight, "", "")
 }
 
+// savePNGCopy saves a PNG copy of an image alongside its GeoTIFF for video export compatibility
+// GeoTIFF files with custom geo tags may not decode properly with standard image decoders,
+// so we create a PNG sidecar that video export can reliably use
+func (a *App) savePNGCopy(img image.Image, tifPath string) {
+	pngPath := strings.TrimSuffix(tifPath, ".tif") + ".png"
+	pngFile, err := os.Create(pngPath)
+	if err != nil {
+		log.Printf("Failed to create PNG file: %v", err)
+		return
+	}
+	defer pngFile.Close()
+
+	if err := png.Encode(pngFile, img); err != nil {
+		log.Printf("Failed to encode PNG: %v", err)
+		return
+	}
+	a.emitLog(fmt.Sprintf("Saved PNG copy: %s", filepath.Base(pngPath)))
+}
+
 // saveAsGeoTIFFWithMetadata saves an image as a georeferenced TIFF with full metadata
 func (a *App) saveAsGeoTIFFWithMetadata(img image.Image, outputPath string, originX, originY, pixelWidth, pixelHeight float64, source, date string) error {
 	// Create TIFF file
@@ -699,8 +725,8 @@ func (a *App) saveAsGeoTIFFWithMetadata(img image.Image, outputPath string, orig
 	// 3072 (ProjectedCSType) = 3857 (WGS 84 / Pseudo-Mercator - EPSG:3857)
 	extraTags[geotiff.TagType_GeoKeyDirectoryTag] = []uint16{
 		1, 1, 0, 3,
-		1024, 0, 1, 1,    // GTModelTypeGeoKey: Projected
-		1025, 0, 1, 1,    // GTRasterTypeGeoKey: PixelIsArea
+		1024, 0, 1, 1, // GTModelTypeGeoKey: Projected
+		1025, 0, 1, 1, // GTRasterTypeGeoKey: PixelIsArea
 		3072, 0, 1, 3857, // ProjectedCSTypeGeoKey: EPSG:3857
 	}
 
@@ -823,10 +849,12 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 			status = fmt.Sprintf("Downloading tile %d/%d", i+1, total)
 		}
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: i,
-			Total:      total,
-			Percent:    (i * 100) / total,
-			Status:     status,
+			Downloaded:  i,
+			Total:       total,
+			Percent:     (i * 100) / total,
+			Status:      status,
+			CurrentDate: a.currentDateIndex,
+			TotalDates:  a.totalDatesInRange,
 		})
 
 		// Download tile
@@ -922,6 +950,9 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		}
 
 		a.emitLog(fmt.Sprintf("Saved: %s", tifPath))
+
+		// Save PNG copy for video export compatibility
+		a.savePNGCopy(outputImg, tifPath)
 	}
 
 	if format == "tiles" || format == "both" {
@@ -1888,10 +1919,12 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 			status = fmt.Sprintf("Downloading tile %d/%d", processedCount, total)
 		}
 		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
-			Downloaded: processedCount,
-			Total:      total,
-			Percent:    (processedCount * 100) / total,
-			Status:     status,
+			Downloaded:  processedCount,
+			Total:       total,
+			Percent:     (processedCount * 100) / total,
+			Status:      status,
+			CurrentDate: a.currentDateIndex,
+			TotalDates:  a.totalDatesInRange,
 		})
 
 		if !result.success {
@@ -1982,6 +2015,9 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		}
 
 		a.emitLog(fmt.Sprintf("Saved: %s", tifPath))
+
+		// Save PNG copy for video export compatibility
+		a.savePNGCopy(outputImg, tifPath)
 	}
 
 	if format == "tiles" || format == "both" {
@@ -2019,8 +2055,12 @@ type VideoExportOptions struct {
 	Height int    `json:"height"`
 	Preset string `json:"preset"` // "instagram_square", "tiktok", "youtube", etc.
 
+	// Crop position (0.0-1.0, where 0.5 is center)
+	CropX float64 `json:"cropX"` // 0=left, 0.5=center, 1=right
+	CropY float64 `json:"cropY"` // 0=top, 0.5=center, 1=bottom
+
 	// Spotlight area (relative coordinates 0-1 in bbox)
-	SpotlightEnabled bool    `json:"spotlightEnabled"`
+	SpotlightEnabled   bool    `json:"spotlightEnabled"`
 	SpotlightCenterLat float64 `json:"spotlightCenterLat"`
 	SpotlightCenterLon float64 `json:"spotlightCenterLon"`
 	SpotlightRadiusKm  float64 `json:"spotlightRadiusKm"`
@@ -2029,14 +2069,14 @@ type VideoExportOptions struct {
 	OverlayOpacity float64 `json:"overlayOpacity"` // 0.0 to 1.0
 
 	// Date overlay
-	ShowDateOverlay bool   `json:"showDateOverlay"`
+	ShowDateOverlay bool    `json:"showDateOverlay"`
 	DateFontSize    float64 `json:"dateFontSize"`
-	DatePosition    string `json:"datePosition"` // "top-left", "top-right", "bottom-left", "bottom-right"
+	DatePosition    string  `json:"datePosition"` // "top-left", "top-right", "bottom-left", "bottom-right"
 
 	// Video settings
 	FrameDelay   float64 `json:"frameDelay"`   // Seconds between frames
-	OutputFormat string `json:"outputFormat"` // "mp4", "gif"
-	Quality      int    `json:"quality"`      // 0-100
+	OutputFormat string  `json:"outputFormat"` // "mp4", "gif"
+	Quality      int     `json:"quality"`      // 0-100
 }
 
 // DownloadGoogleEarthHistoricalImageryRange downloads multiple historical Google Earth imagery dates
@@ -2136,10 +2176,20 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 	fontPath := ""
 	// TODO: Embed Quicksand font or convert WOFF2 to TTF for date overlay
 
+	// Default crop position to center if not specified
+	cropX := videoOpts.CropX
+	cropY := videoOpts.CropY
+	if cropX == 0 && cropY == 0 {
+		cropX = 0.5
+		cropY = 0.5
+	}
+
 	opts := &video.ExportOptions{
 		Width:           width,
 		Height:          height,
 		Preset:          preset,
+		CropX:           cropX,
+		CropY:           cropY,
 		UseSpotlight:    videoOpts.SpotlightEnabled,
 		OverlayOpacity:  videoOpts.OverlayOpacity,
 		OverlayColor:    video.DefaultExportOptions().OverlayColor, // Use default black
@@ -2154,6 +2204,7 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		FrameDelay:      videoOpts.FrameDelay,
 		OutputFormat:    videoOpts.OutputFormat,
 		Quality:         videoOpts.Quality,
+		UseH264:         true, // Try to use H.264 if FFmpeg is available
 	}
 
 	// If spotlight is enabled, calculate pixel coordinates from geographic coordinates
@@ -2188,24 +2239,31 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 
 		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
 		filename := generateGeoTIFFFilename(source, dateInfo.Date, bbox, zoom)
-		geotiffPath := filepath.Join(downloadDir, filename)
+		basePath := filepath.Join(downloadDir, filename)
 
-		log.Printf("[VideoExport] Looking for GeoTIFF: %s", geotiffPath)
-		a.emitLog(fmt.Sprintf("Looking for GeoTIFF: %s", geotiffPath))
+		// Try loading PNG first (created as sidecar for better compatibility)
+		imagePath := strings.TrimSuffix(basePath, ".tif") + ".png"
+		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+			// Fallback to GeoTIFF if PNG not found
+			imagePath = basePath
+		}
 
-		// Check if GeoTIFF exists
-		if _, err := os.Stat(geotiffPath); os.IsNotExist(err) {
-			log.Printf("[VideoExport] ❌ GeoTIFF not found for %s: %s", dateInfo.Date, geotiffPath)
-			a.emitLog(fmt.Sprintf("❌ GeoTIFF not found for %s: %s", dateInfo.Date, geotiffPath))
+		log.Printf("[VideoExport] Looking for frame: %s", imagePath)
+		a.emitLog(fmt.Sprintf("Looking for frame: %s", imagePath))
+
+		// Check if file exists
+		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+			log.Printf("[VideoExport] ❌ Frame not found for %s: %s", dateInfo.Date, imagePath)
+			a.emitLog(fmt.Sprintf("❌ Frame not found for %s: %s", dateInfo.Date, imagePath))
 			continue
 		}
 
-		log.Printf("[VideoExport] ✅ Found GeoTIFF for %s", dateInfo.Date)
-		a.emitLog(fmt.Sprintf("✅ Found GeoTIFF for %s", dateInfo.Date))
+		log.Printf("[VideoExport] ✅ Found frame for %s", dateInfo.Date)
+		a.emitLog(fmt.Sprintf("✅ Found frame for %s", dateInfo.Date))
 
 		// Load image
-		log.Printf("[VideoExport] Attempting to load image from: %s", geotiffPath)
-		img, err := a.loadGeoTIFFImage(geotiffPath)
+		log.Printf("[VideoExport] Attempting to load image from: %s", imagePath)
+		img, err := a.loadGeoTIFFImage(imagePath)
 		if err != nil {
 			log.Printf("[VideoExport] ❌ ERROR: Failed to load GeoTIFF for %s: %v", dateInfo.Date, err)
 			a.emitLog(fmt.Sprintf("Failed to load GeoTIFF for %s: %v", dateInfo.Date, err))

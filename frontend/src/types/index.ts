@@ -14,6 +14,8 @@ export interface DownloadProgress {
   total: number;
   percent: number;
   status: string;
+  currentDate?: number;  // Current date index in range download (1-based)
+  totalDates?: number;   // Total dates in range download
 }
 
 // Imagery Source

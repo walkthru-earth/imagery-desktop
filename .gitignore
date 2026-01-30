@@ -44,3 +44,7 @@ __pycache__/
 imagery-desktop
 CLAUDE.md
 .env.local
+FFmpeg/ffmpeg
+
+# Downloaded FFmpeg binary (not committed)
+FFmpeg/

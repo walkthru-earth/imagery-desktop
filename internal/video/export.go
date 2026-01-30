@@ -8,7 +8,14 @@ import (
 	"image/draw"
 	"image/gif"
 	"image/jpeg"
+	"image/png"
+	"io"
+	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/icza/mjpeg"
@@ -21,15 +28,16 @@ import (
 type SocialMediaPreset string
 
 const (
-	PresetCustom           SocialMediaPreset = "custom"
-	PresetInstagramSquare  SocialMediaPreset = "instagram_square"   // 1080x1080
+	PresetCustom            SocialMediaPreset = "custom"
+	PresetInstagramSquare   SocialMediaPreset = "instagram_square"   // 1080x1080
 	PresetInstagramPortrait SocialMediaPreset = "instagram_portrait" // 1080x1350
-	PresetInstagramStory   SocialMediaPreset = "instagram_story"    // 1080x1920
-	PresetTikTok           SocialMediaPreset = "tiktok"             // 1080x1920
-	PresetYouTube          SocialMediaPreset = "youtube"            // 1920x1080
-	PresetYouTubeShorts    SocialMediaPreset = "youtube_shorts"     // 1080x1920
-	PresetTwitter          SocialMediaPreset = "twitter"            // 1280x720
-	PresetFacebook         SocialMediaPreset = "facebook"           // 1280x720
+	PresetInstagramStory    SocialMediaPreset = "instagram_story"    // 1080x1920
+	PresetInstagramReel     SocialMediaPreset = "instagram_reel"     // 1080x1920
+	PresetTikTok            SocialMediaPreset = "tiktok"             // 1080x1920
+	PresetYouTube           SocialMediaPreset = "youtube"            // 1920x1080
+	PresetYouTubeShorts     SocialMediaPreset = "youtube_shorts"     // 1080x1920
+	PresetTwitter           SocialMediaPreset = "twitter"            // 1280x720
+	PresetFacebook          SocialMediaPreset = "facebook"           // 1280x720
 )
 
 // GetPresetDimensions returns width and height for a preset
@@ -39,7 +47,7 @@ func GetPresetDimensions(preset SocialMediaPreset) (int, int) {
 		return 1080, 1080
 	case PresetInstagramPortrait:
 		return 1080, 1350
-	case PresetInstagramStory, PresetTikTok, PresetYouTubeShorts:
+	case PresetInstagramStory, PresetInstagramReel, PresetTikTok, PresetYouTubeShorts:
 		return 1080, 1920
 	case PresetYouTube:
 		return 1920, 1080
@@ -50,6 +58,34 @@ func GetPresetDimensions(preset SocialMediaPreset) (int, int) {
 	}
 }
 
+// GetPresetLabel returns a human-readable label for a preset
+func GetPresetLabel(preset SocialMediaPreset) string {
+	switch preset {
+	case PresetInstagramSquare:
+		return "Instagram Square (1080×1080)"
+	case PresetInstagramPortrait:
+		return "Instagram Portrait (1080×1350)"
+	case PresetInstagramStory:
+		return "Instagram Story (1080×1920)"
+	case PresetInstagramReel:
+		return "Instagram Reel (1080×1920)"
+	case PresetTikTok:
+		return "TikTok (1080×1920)"
+	case PresetYouTube:
+		return "YouTube (1920×1080)"
+	case PresetYouTubeShorts:
+		return "YouTube Shorts (1080×1920)"
+	case PresetTwitter:
+		return "Twitter/X (1280×720)"
+	case PresetFacebook:
+		return "Facebook (1280×720)"
+	case PresetCustom:
+		return "Custom"
+	default:
+		return "YouTube (1920×1080)"
+	}
+}
+
 // ExportOptions contains all options for video export
 type ExportOptions struct {
 	// Dimensions
@@ -57,7 +93,13 @@ type ExportOptions struct {
 	Height int
 	Preset SocialMediaPreset
 
-	// Spotlight area (pixel coordinates in source image)
+	// Crop position (0.0-1.0, where 0.5 is center)
+	// CropX controls horizontal position: 0=left edge, 0.5=center, 1.0=right edge
+	// CropY controls vertical position: 0=top, 0.5=center, 1.0=bottom
+	CropX float64
+	CropY float64
+
+	// Spotlight area (pixel coordinates in source image) - for grayout effect
 	SpotlightX      int
 	SpotlightY      int
 	SpotlightWidth  int
@@ -69,19 +111,20 @@ type ExportOptions struct {
 	OverlayColor   color.RGBA
 
 	// Date overlay
-	ShowDateOverlay  bool
-	DateFontSize     float64
-	DatePosition     string // "top-left", "top-right", "bottom-left", "bottom-right", "center"
-	DateColor        color.RGBA
-	DateShadow       bool
-	DateFormat       string // e.g., "2006-01-02", "Jan 02, 2006"
-	DateFontPath     string // Path to Quicksand font
+	ShowDateOverlay bool
+	DateFontSize    float64
+	DatePosition    string // "top-left", "top-right", "bottom-left", "bottom-right", "center"
+	DateColor       color.RGBA
+	DateShadow      bool
+	DateFormat      string // e.g., "2006-01-02", "Jan 02, 2006"
+	DateFontPath    string // Path to font file
 
 	// Video settings
-	FrameRate    int    // FPS (e.g., 30, 24, 15)
+	FrameRate    int     // FPS (e.g., 30, 24, 15)
 	FrameDelay   float64 // Seconds between frames (e.g., 0.5 = 2 images per second)
-	OutputFormat string // "mp4", "gif", "webm"
-	Quality      int    // 0-100 (for lossy formats)
+	OutputFormat string  // "mp4", "gif", "avi"
+	Quality      int     // 0-100 (for lossy formats)
+	UseH264      bool    // Try to use H.264 encoding via FFmpeg
 
 	// Metadata
 	Title       string
@@ -94,6 +137,8 @@ func DefaultExportOptions() *ExportOptions {
 		Width:           1920,
 		Height:          1080,
 		Preset:          PresetYouTube,
+		CropX:           0.5, // Center horizontally
+		CropY:           0.5, // Center vertically
 		UseSpotlight:    false,
 		OverlayOpacity:  0.6,
 		OverlayColor:    color.RGBA{0, 0, 0, 255},
@@ -107,6 +152,7 @@ func DefaultExportOptions() *ExportOptions {
 		FrameDelay:      0.5,
 		OutputFormat:    "mp4",
 		Quality:         90,
+		UseH264:         true,
 	}
 }
 
@@ -118,8 +164,115 @@ type Frame struct {
 
 // Exporter handles video export operations
 type Exporter struct {
-	options *ExportOptions
-	font    font.Face
+	options    *ExportOptions
+	font       font.Face
+	ffmpegPath string
+}
+
+// CheckFFmpeg checks if FFmpeg is available - first checks bundled, then system
+func CheckFFmpeg() (string, bool) {
+	// First, check for bundled FFmpeg relative to executable
+	bundledPath := getBundledFFmpegPath()
+	if bundledPath != "" {
+		if _, err := os.Stat(bundledPath); err == nil {
+			return bundledPath, true
+		}
+	}
+
+	// Then try system PATH
+	names := []string{"ffmpeg"}
+	if runtime.GOOS == "windows" {
+		names = []string{"ffmpeg.exe", "ffmpeg"}
+	}
+
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		if err == nil {
+			return path, true
+		}
+	}
+
+	// Check common installation directories
+	commonPaths := []string{}
+	switch runtime.GOOS {
+	case "darwin":
+		commonPaths = []string{
+			"/usr/local/bin/ffmpeg",
+			"/opt/homebrew/bin/ffmpeg",
+			"/opt/local/bin/ffmpeg",
+		}
+	case "linux":
+		commonPaths = []string{
+			"/usr/bin/ffmpeg",
+			"/usr/local/bin/ffmpeg",
+		}
+	case "windows":
+		commonPaths = []string{
+			"C:\\ffmpeg\\bin\\ffmpeg.exe",
+			"C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+		}
+	}
+
+	for _, path := range commonPaths {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+
+	return "", false
+}
+
+// getBundledFFmpegPath returns the path to bundled FFmpeg based on OS and executable location
+func getBundledFFmpegPath() string {
+	// Get the executable path
+	execPath, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	execDir := filepath.Dir(execPath)
+
+	switch runtime.GOOS {
+	case "darwin":
+		// On macOS, the app bundle structure is:
+		// MyApp.app/Contents/MacOS/MyApp (executable)
+		// MyApp.app/Contents/Resources/ffmpeg (bundled ffmpeg)
+		// Also check for development mode where FFmpeg is in project root
+		possiblePaths := []string{
+			filepath.Join(execDir, "..", "Resources", "ffmpeg"),
+			filepath.Join(execDir, "ffmpeg"),
+			filepath.Join(execDir, "..", "..", "..", "FFmpeg", "ffmpeg"), // Dev mode
+		}
+		for _, p := range possiblePaths {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	case "windows":
+		// On Windows, ffmpeg.exe is next to the executable
+		possiblePaths := []string{
+			filepath.Join(execDir, "ffmpeg.exe"),
+			filepath.Join(execDir, "FFmpeg", "ffmpeg.exe"),
+		}
+		for _, p := range possiblePaths {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	case "linux":
+		// On Linux, ffmpeg is next to the executable or in lib folder
+		possiblePaths := []string{
+			filepath.Join(execDir, "ffmpeg"),
+			filepath.Join(execDir, "lib", "ffmpeg"),
+			filepath.Join(execDir, "FFmpeg", "ffmpeg"),
+		}
+		for _, p := range possiblePaths {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+
+	return ""
 }
 
 // NewExporter creates a new video exporter
@@ -128,17 +281,34 @@ func NewExporter(opts *ExportOptions) (*Exporter, error) {
 		options: opts,
 	}
 
+	// Check for FFmpeg if H.264 is requested
+	if opts.UseH264 {
+		path, found := CheckFFmpeg()
+		if found {
+			e.ffmpegPath = path
+			log.Printf("[VideoExport] FFmpeg found at: %s", path)
+		} else {
+			log.Printf("[VideoExport] FFmpeg not found, will use fallback encoder")
+		}
+	}
+
 	// Load font if date overlay is enabled
 	if opts.ShowDateOverlay && opts.DateFontPath != "" {
 		if err := e.loadFont(); err != nil {
-			return nil, fmt.Errorf("failed to load font: %w", err)
+			log.Printf("[VideoExport] Warning: failed to load font: %v", err)
+			// Don't fail - continue without date overlay
 		}
 	}
 
 	return e, nil
 }
 
-// loadFont loads the Quicksand font for date overlay
+// HasFFmpeg returns true if FFmpeg is available
+func (e *Exporter) HasFFmpeg() bool {
+	return e.ffmpegPath != ""
+}
+
+// loadFont loads the font for date overlay
 func (e *Exporter) loadFont() error {
 	fontBytes, err := os.ReadFile(e.options.DateFontPath)
 	if err != nil {
@@ -344,12 +514,20 @@ func (e *Exporter) drawDateOverlay(dst *image.RGBA, date time.Time) {
 	drawer.DrawString(dateStr)
 }
 
-// ExportVideo creates a video from processed frames using native Go libraries
+// ExportVideo creates a video from processed frames
 func (e *Exporter) ExportVideo(frames []Frame, outputPath string) error {
 	opts := e.options
 
 	switch opts.OutputFormat {
-	case "mp4", "avi":
+	case "mp4":
+		if e.ffmpegPath != "" && opts.UseH264 {
+			return e.exportH264(frames, outputPath)
+		}
+		// Fallback to MJPEG AVI
+		aviPath := strings.TrimSuffix(outputPath, ".mp4") + ".avi"
+		log.Printf("[VideoExport] FFmpeg not available, falling back to MJPEG AVI: %s", aviPath)
+		return e.exportMotionJPEG(frames, aviPath)
+	case "avi":
 		return e.exportMotionJPEG(frames, outputPath)
 	case "gif":
 		return e.exportGIF(frames, outputPath)
@@ -358,15 +536,217 @@ func (e *Exporter) ExportVideo(frames []Frame, outputPath string) error {
 	}
 }
 
+// exportH264 creates an MP4 file with H.264 codec using FFmpeg
+// It uses FFmpeg's scale and crop filters to properly handle aspect ratio
+func (e *Exporter) exportH264(frames []Frame, outputPath string) error {
+	if len(frames) == 0 {
+		return fmt.Errorf("no frames to export")
+	}
+
+	log.Printf("[VideoExport] Exporting H.264 video with %d frames to %dx%d", len(frames), e.options.Width, e.options.Height)
+
+	// Create temporary directory for frames
+	tempDir, err := os.MkdirTemp("", "timelapse_frames_*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	log.Printf("[VideoExport] Temp directory created: %s", tempDir)
+
+	// Calculate how many times to duplicate each frame based on frame delay
+	duplicateCount := int(e.options.FrameDelay * float64(e.options.FrameRate))
+	if duplicateCount < 1 {
+		duplicateCount = 1
+	}
+
+	log.Printf("[VideoExport] Frame duplication count: %d (frameDelay=%.2f, frameRate=%d)",
+		duplicateCount, e.options.FrameDelay, e.options.FrameRate)
+
+	// Save original frames as PNG (no Go-side processing - let FFmpeg handle scaling/cropping)
+	frameIndex := 0
+	var srcWidth, srcHeight int
+	for i, frame := range frames {
+		log.Printf("[VideoExport] Saving frame %d/%d", i+1, len(frames))
+
+		// Record source dimensions from first frame
+		if i == 0 {
+			srcWidth = frame.Image.Bounds().Dx()
+			srcHeight = frame.Image.Bounds().Dy()
+			log.Printf("[VideoExport] Source frame dimensions: %dx%d", srcWidth, srcHeight)
+		}
+
+		// Duplicate frame for proper timing
+		for d := 0; d < duplicateCount; d++ {
+			framePath := filepath.Join(tempDir, fmt.Sprintf("frame_%05d.png", frameIndex))
+			f, err := os.Create(framePath)
+			if err != nil {
+				return fmt.Errorf("failed to create frame file: %w", err)
+			}
+
+			if err := png.Encode(f, frame.Image); err != nil {
+				f.Close()
+				return fmt.Errorf("failed to encode frame %d: %w", i, err)
+			}
+			f.Close()
+			frameIndex++
+		}
+	}
+
+	log.Printf("[VideoExport] Saved %d frames to temp directory", frameIndex)
+
+	// Verify frames exist
+	files, err := filepath.Glob(filepath.Join(tempDir, "frame_*.png"))
+	if err != nil || len(files) == 0 {
+		return fmt.Errorf("no frame files found in temp directory after processing")
+	}
+	log.Printf("[VideoExport] Verified %d frame files exist", len(files))
+
+	// Build video filter for proper aspect ratio handling
+	// Strategy: Scale to fill (maintaining aspect ratio), then crop to exact dimensions
+	targetW := e.options.Width
+	targetH := e.options.Height
+
+	// Calculate scale factor to fill the target (the larger scale to cover the target)
+	srcAspect := float64(srcWidth) / float64(srcHeight)
+	targetAspect := float64(targetW) / float64(targetH)
+
+	var scaleFilter string
+	if srcAspect > targetAspect {
+		// Source is wider than target - scale by height, crop width
+		scaleFilter = fmt.Sprintf("scale=-1:%d", targetH)
+	} else {
+		// Source is taller than target - scale by width, crop height
+		scaleFilter = fmt.Sprintf("scale=%d:-1", targetW)
+	}
+
+	// Calculate crop position based on CropX and CropY (0.0-1.0)
+	// iw/ih = input width/height after scaling
+	// out_w/out_h = target dimensions
+	// x = (iw - out_w) * cropX
+	// y = (ih - out_h) * cropY
+	cropX := e.options.CropX
+	cropY := e.options.CropY
+	if cropX < 0 {
+		cropX = 0.5
+	}
+	if cropY < 0 {
+		cropY = 0.5
+	}
+	if cropX > 1 {
+		cropX = 0.5
+	}
+	if cropY > 1 {
+		cropY = 0.5
+	}
+
+	cropFilter := fmt.Sprintf("crop=%d:%d:(iw-%d)*%.2f:(ih-%d)*%.2f",
+		targetW, targetH, targetW, cropX, targetH, cropY)
+
+	// Combine filters
+	videoFilter := fmt.Sprintf("%s,%s", scaleFilter, cropFilter)
+	log.Printf("[VideoExport] Video filter: %s", videoFilter)
+
+	// Calculate CRF (quality): 0-51, lower is better
+	// Map quality 0-100 to CRF 51-0
+	crf := 51 - (e.options.Quality * 51 / 100)
+	if crf < 0 {
+		crf = 0
+	}
+	if crf > 51 {
+		crf = 51
+	}
+
+	// Build FFmpeg command
+	inputPattern := filepath.Join(tempDir, "frame_%05d.png")
+	args := []string{
+		"-y",                    // Overwrite output
+		"-framerate", fmt.Sprintf("%d", e.options.FrameRate),
+		"-i", inputPattern,
+		"-vf", videoFilter,      // Scale and crop filter
+		"-c:v", "libx264",       // H.264 codec
+		"-preset", "medium",     // Encoding speed/quality tradeoff
+		"-crf", fmt.Sprintf("%d", crf),
+		"-pix_fmt", "yuv420p",   // Pixel format for compatibility
+		"-movflags", "+faststart", // Enable streaming
+		outputPath,
+	}
+
+	log.Printf("[VideoExport] Running FFmpeg: %s %v", e.ffmpegPath, args)
+
+	cmd := exec.Command(e.ffmpegPath, args...)
+
+	// Capture both stdout and stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Start the command
+	log.Printf("[VideoExport] Starting FFmpeg process...")
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start FFmpeg: %w", err)
+	}
+
+	// Wait for completion with a timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	// 5 minute timeout for video encoding
+	timeout := time.After(5 * time.Minute)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("[VideoExport] FFmpeg stderr: %s", stderr.String())
+			return fmt.Errorf("FFmpeg encoding failed: %w\nStderr: %s", err, stderr.String())
+		}
+	case <-timeout:
+		// Kill the process if it times out
+		cmd.Process.Kill()
+		log.Printf("[VideoExport] FFmpeg timed out after 5 minutes")
+		log.Printf("[VideoExport] FFmpeg stderr so far: %s", stderr.String())
+		return fmt.Errorf("FFmpeg encoding timed out after 5 minutes")
+	}
+
+	// Verify output file exists and has content
+	if info, err := os.Stat(outputPath); err != nil {
+		return fmt.Errorf("output file not created: %w", err)
+	} else if info.Size() == 0 {
+		return fmt.Errorf("output file is empty")
+	} else {
+		log.Printf("[VideoExport] Output file size: %d bytes", info.Size())
+	}
+
+	log.Printf("[VideoExport] H.264 video exported successfully: %s", outputPath)
+	return nil
+}
+
 // exportMotionJPEG creates an AVI file with Motion JPEG codec (compatible, plays everywhere)
 func (e *Exporter) exportMotionJPEG(frames []Frame, outputPath string) error {
 	if len(frames) == 0 {
 		return fmt.Errorf("no frames to export")
 	}
 
+	// Ensure output has .avi extension
+	if !strings.HasSuffix(strings.ToLower(outputPath), ".avi") {
+		outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".avi"
+	}
+
+	// Calculate effective frame rate based on frame delay
+	// Each frame should show for frameDelay seconds
+	// So effective FPS = 1 / frameDelay
+	effectiveFPS := int(1.0 / e.options.FrameDelay)
+	if effectiveFPS < 1 {
+		effectiveFPS = 1
+	}
+	if effectiveFPS > 30 {
+		effectiveFPS = 30
+	}
+
 	// Create MJPEG writer
-	// Note: MJPEG AVI files are widely compatible and don't require external encoders
-	writer, err := mjpeg.New(outputPath, int32(e.options.Width), int32(e.options.Height), int32(e.options.FrameRate))
+	writer, err := mjpeg.New(outputPath, int32(e.options.Width), int32(e.options.Height), int32(effectiveFPS))
 	if err != nil {
 		return fmt.Errorf("failed to create video writer: %w", err)
 	}
@@ -391,6 +771,7 @@ func (e *Exporter) exportMotionJPEG(frames []Frame, outputPath string) error {
 		}
 	}
 
+	log.Printf("[VideoExport] MJPEG video exported: %s", outputPath)
 	return nil
 }
 
@@ -452,3 +833,6 @@ func (e *Exporter) Close() error {
 	}
 	return nil
 }
+
+// Ensure io is used (for potential future streaming support)
+var _ = io.Discard

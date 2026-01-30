@@ -27,7 +27,6 @@ import { useTheme } from "@/components/ThemeProvider";
 
 // API & Types
 import { api, createBoundingBox } from "@/services/api";
-import type { DownloadProgress } from "@/types";
 import { useState } from "react";
 
 // RTL text plugin URL for Arabic support
@@ -37,10 +36,6 @@ const RTL_PLUGIN_URL =
 function App() {
   const { theme, setTheme } = useTheme();
   const { state, dispatch } = useImageryContext();
-
-  // Download progress
-  const [downloadProgress, setDownloadProgress] =
-    useState<DownloadProgress | null>(null);
 
   // Export dialog state
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
@@ -310,16 +305,6 @@ function App() {
   }, [singleMap, state.viewMode, state.layers.bbox]);
 
   // ===================
-  // Download Progress
-  // ===================
-  useEffect(() => {
-    const unsubscribe = api.onDownloadProgress((progress: DownloadProgress) => {
-      setDownloadProgress(progress);
-    });
-    return unsubscribe;
-  }, []);
-
-  // ===================
   // Export Handler
   // ===================
   const handleExport = async (dateRange?: any[]) => {
@@ -457,34 +442,6 @@ function App() {
 
         {/* Map Controls */}
         <MapControls onExport={handleExport} />
-
-        {/* Download Progress */}
-        {downloadProgress &&
-          downloadProgress.percent > 0 &&
-          downloadProgress.percent < 100 && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-background/95 backdrop-blur-lg border border-border rounded-lg shadow-2xl p-6 min-w-[320px]">
-              <h3 className="text-lg font-semibold mb-3">Downloading</h3>
-              <div className="space-y-2">
-                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                  <div
-                    className="h-full bg-primary transition-all duration-300"
-                    style={{ width: `${downloadProgress.percent}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">
-                    {downloadProgress.percent.toFixed(1)}%
-                  </span>
-                  <span className="text-muted-foreground">
-                    {downloadProgress.downloaded} / {downloadProgress.total}
-                  </span>
-                </div>
-                <p className="text-xs text-center text-muted-foreground mt-2">
-                  {downloadProgress.status}
-                </p>
-              </div>
-            </div>
-          )}
 
         {/* Export Dialog */}
         <ExportDialog
