@@ -125,7 +125,10 @@ export function ExportDialog({
         }
 
         // Video export if requested (after GeoTIFFs are downloaded)
+        console.log("[ExportDialog] Video export check:", { includeVideo, format, willExport: includeVideo && format !== "tiles" });
+
         if (includeVideo && format !== "tiles") {
+          console.log("[ExportDialog] Starting video export...");
           setProgress({
             downloaded: 0,
             total: 1,
@@ -158,6 +161,14 @@ export function ExportDialog({
             epoch: d.epoch || 0,
           }));
 
+          console.log("[ExportDialog] Calling exportTimelapseVideo with:", {
+            bbox,
+            zoom: exportZoom,
+            dateCount: geDatesForVideo.length,
+            source: source === "esri" ? "esri" : "ge_historical",
+            videoOpts
+          });
+
           await api.exportTimelapseVideo(
             bbox,
             exportZoom,
@@ -165,6 +176,8 @@ export function ExportDialog({
             source === "esri" ? "esri" : "ge_historical",
             videoOpts
           );
+
+          console.log("[ExportDialog] Video export completed successfully");
         }
       } else {
         // Single date export
