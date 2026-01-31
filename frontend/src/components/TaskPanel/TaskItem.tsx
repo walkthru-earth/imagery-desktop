@@ -111,8 +111,11 @@ export function TaskItem({
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Actions - always visible for pending, hover for others */}
+      <div className={cn(
+        "flex items-center gap-1 transition-opacity",
+        task.status === "pending" ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+      )}>
         {canCancel && (
           <Button
             variant="ghost"
