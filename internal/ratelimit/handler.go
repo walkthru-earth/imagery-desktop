@@ -31,12 +31,12 @@ func DefaultRetryStrategy() *RetryStrategy {
 
 // RateLimitEvent represents a rate limit occurrence
 type RateLimitEvent struct {
-	Timestamp    time.Time
-	Provider     string // "google" or "esri"
-	StatusCode   int    // HTTP status code (403, 429, etc.)
-	RetryAttempt int    // Current retry attempt (0 = first occurrence)
-	NextRetryAt  time.Time
-	Message      string // User-friendly message
+	Timestamp    time.Time `json:"timestamp" ts_type:"string"`
+	Provider     string    `json:"provider"` // "google" or "esri"
+	StatusCode   int       `json:"statusCode"` // HTTP status code (403, 429, etc.)
+	RetryAttempt int       `json:"retryAttempt"` // Current retry attempt (0 = first occurrence)
+	NextRetryAt  time.Time `json:"nextRetryAt" ts_type:"string"`
+	Message      string    `json:"message"` // User-friendly message
 }
 
 // Handler manages rate limit detection and retry logic
