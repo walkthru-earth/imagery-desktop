@@ -414,6 +414,13 @@ func (a *App) startup(ctx context.Context) {
 				"success": success,
 				"error":   errStr,
 			})
+
+			// Open download folder once after task completion (only if successful)
+			if success {
+				if openErr := a.OpenDownloadFolder(); openErr != nil {
+					log.Printf("Failed to open download folder: %v", openErr)
+				}
+			}
 		},
 		func(title, message, notifType string) {
 			wailsRuntime.EventsEmit(ctx, "system-notification", map[string]interface{}{
@@ -759,10 +766,12 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		return err
 	}
 
-	// Auto-open download folder
-	a.emitLog("Opening download folder...")
-	if err := a.OpenDownloadFolder(); err != nil {
-		log.Printf("Failed to open download folder: %v", err)
+	// Auto-open download folder (only if not running in task queue)
+	if a.currentTaskID == "" {
+		a.emitLog("Opening download folder...")
+		if err := a.OpenDownloadFolder(); err != nil {
+			log.Printf("Failed to open download folder: %v", err)
+		}
 	}
 
 	return nil
@@ -875,10 +884,12 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		return err
 	}
 
-	// Auto-open download folder
-	a.emitLog("Opening download folder...")
-	if err := a.OpenDownloadFolder(); err != nil {
-		log.Printf("Failed to open download folder: %v", err)
+	// Auto-open download folder (only if not running in task queue)
+	if a.currentTaskID == "" {
+		a.emitLog("Opening download folder...")
+		if err := a.OpenDownloadFolder(); err != nil {
+			log.Printf("Failed to open download folder: %v", err)
+		}
 	}
 
 	return nil
@@ -894,10 +905,12 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 		return err
 	}
 
-	// Auto-open download folder
-	a.emitLog("Opening download folder...")
-	if err := a.OpenDownloadFolder(); err != nil {
-		log.Printf("Failed to open download folder: %v", err)
+	// Auto-open download folder (only if not running in task queue)
+	if a.currentTaskID == "" {
+		a.emitLog("Opening download folder...")
+		if err := a.OpenDownloadFolder(); err != nil {
+			log.Printf("Failed to open download folder: %v", err)
+		}
 	}
 
 	return nil
@@ -1237,10 +1250,12 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 		return err
 	}
 
-	// Auto-open download folder
-	a.emitLog("Opening download folder...")
-	if err := a.OpenDownloadFolder(); err != nil {
-		log.Printf("Failed to open download folder: %v", err)
+	// Auto-open download folder (only if not running in task queue)
+	if a.currentTaskID == "" {
+		a.emitLog("Opening download folder...")
+		if err := a.OpenDownloadFolder(); err != nil {
+			log.Printf("Failed to open download folder: %v", err)
+		}
 	}
 
 	return nil
@@ -1294,9 +1309,9 @@ func (a *App) exportTimelapseVideoInternal(bbox BoundingBox, zoom int, dates []G
 
 	// Use videoManager to export
 	var err error
-	if openFolder {
+	if openFolder && a.currentTaskID == "" {
 		err = a.videoManager.ExportTimelapse(videoBBox, zoom, videoDates, source, videoTimelapseOpts)
-		// Auto-open download folder after export
+		// Auto-open download folder after export (only if not in task queue)
 		if err == nil {
 			if openErr := a.OpenDownloadFolder(); openErr != nil {
 				log.Printf("Failed to open download folder: %v", openErr)
@@ -1923,12 +1938,7 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 			}
 		}
 
-		// Open download folder once at the end (only if at least one export succeeded)
-		if successCount > 0 {
-			if err := a.OpenDownloadFolder(); err != nil {
-				log.Printf("Failed to open download folder: %v", err)
-			}
-		}
+		// Note: Download folder will be opened by task completion callback
 
 		// Report final results
 		if len(failedPresets) > 0 {
