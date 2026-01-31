@@ -120,7 +120,7 @@ jobs:
           # Determine platform target
           PLATFORM=""
           if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            PLATFORM="darwin/universal"
+            PLATFORM="darwin/arm64"
           elif [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             PLATFORM="windows/amd64"
           elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
@@ -147,7 +147,7 @@ jobs:
           chmod +x imagery-desktop.app/Contents/Resources/ffmpeg
 
           # Zip the .app bundle with versioned name
-          zip -r "imagery-desktop-${VERSION}-macos.zip" imagery-desktop.app
+          zip -r "imagery-desktop-${VERSION}-macos-arm64.zip" imagery-desktop.app
 
       - name: Bundle FFmpeg and Rename (Windows)
         if: matrix.os == 'windows-latest'
@@ -199,7 +199,7 @@ jobs:
         with:
           name: imagery-desktop-${{ matrix.os }}
           path: |
-            build/bin/imagery-desktop-*-macos.zip
+            build/bin/imagery-desktop-*-macos-arm64.zip
             build/bin/imagery-desktop-*-windows-amd64.zip
             build/bin/imagery-desktop-*-linux-amd64.tar.gz
 
