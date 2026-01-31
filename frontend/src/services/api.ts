@@ -23,6 +23,9 @@ import {
   SetDownloadPath,
   OpenDownloadFolder,
   OpenFolder,
+  // Cache API
+  GetCacheStats,
+  ClearCache,
   // Task Queue API
   AddExportTask,
   GetTaskQueue,
@@ -128,6 +131,13 @@ export const api = {
 
   openFolder: (path: string) =>
     OpenFolder(path),
+
+  // Cache Management
+  getCacheStats: () =>
+    GetCacheStats(),
+
+  clearCache: () =>
+    ClearCache(),
 
   // Tile Server starts automatically in backend startup()
 

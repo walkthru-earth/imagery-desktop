@@ -3,6 +3,7 @@ package cache
 import (
 	"encoding/json"
 	"fmt"
+	"imagery-desktop/internal/downloads"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,11 @@ func (c *PersistentTileCache) Set(provider string, z, x, y int, date string, dat
 
 	// Build file path: {provider}/{z}/{x}/{y}.jpg or {provider}/{z}/{x}/{y}_{date}.jpg
 	filePath := c.buildFilePath(meta)
+
+	// Validate cache path to prevent directory traversal attacks
+	if err := downloads.ValidateCachePath(c.baseDir, filePath); err != nil {
+		return fmt.Errorf("security: invalid cache path: %w", err)
+	}
 
 	// Create directory structure
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {

@@ -8,8 +8,10 @@ A cross-platform desktop application for downloading, visualizing, and exporting
 - **Interactive Map Viewer**: MapLibre GL-based map with temporal slider for date selection
 - **Batch Downloads**: Download imagery for custom bounding boxes with configurable zoom levels
 - **Video Export**: Create timelapse videos from historical imagery sequences
-- **Persistent Caching**: OGC-compliant tile cache with cross-session persistence
+- **Persistent Caching**: OGC-compliant tile cache for both Google Earth and Esri providers with cross-session persistence
 - **Rate Limit Handling**: Automatic retry with exponential backoff for API rate limits
+- **Security Hardening**: Coordinate validation, path traversal protection, and zoom level enforcement
+- **Concurrency Control**: Semaphore-based worker pools for efficient resource management
 - **Cross-Platform**: Native desktop application for macOS, Windows, and Linux
 
 ---
@@ -17,6 +19,8 @@ A cross-platform desktop application for downloading, visualizing, and exporting
 ## 🏗️ Architecture Overview
 
 ### System Components
+
+The application follows a modular architecture with clear separation of concerns. Both Google Earth and Esri Wayback imagery now route through a backend tile server with persistent caching, ensuring consistent performance and reduced API calls.
 
 ```mermaid
 graph TB
@@ -28,7 +32,7 @@ graph TB
 
     subgraph "Backend (Go)"
         APP[Wails App Controller]
-        TS[Tile Server]
+        TS[Tile Server - Both Providers]
         CACHE[Persistent Cache]
         DL[Download Manager]
         VE[Video Exporter]
@@ -62,6 +66,12 @@ graph TB
     DL --> ES
     VE --> DISK
 ```
+
+**Key Architecture Updates:**
+- **Modular Design**: Core logic refactored from monolithic `app.go` (3,395 lines) to organized packages (~1,500 lines)
+- **Unified Tile Server**: Both Google Earth and Esri tiles now route through backend server with caching
+- **Security**: Path traversal protection, coordinate validation, and zoom level enforcement
+- **Performance**: Semaphore-based concurrency control for optimal resource usage
 
 ### Technology Stack
 
@@ -201,12 +211,12 @@ stateDiagram-v2
 
 ## 📁 Cache Structure (OGC-Compliant)
 
-The application uses an OGC ZXY-compliant directory structure for tile caching, making it compatible with GeoServer, PyGeoAPI, QGIS, and GDAL:
+The application uses an OGC ZXY-compliant directory structure for tile caching, making it compatible with GeoServer, PyGeoAPI, QGIS, and GDAL. Both Google Earth and Esri Wayback tiles are cached using the same backend tile server architecture.
 
 ```
 ~/.walkthru-earth/imagery-desktop/cache/
 ├── cache_index.json              # Metadata index (LRU, TTL, sizes)
-├── google/                        # Google Earth provider
+├── google_earth/                 # Google Earth provider
 │   ├── 2024-12-31/               # Date as directory (OGC temporal standard)
 │   │   ├── 15/                   # Zoom level 15
 │   │   │   ├── 16384/            # X coordinate
@@ -218,7 +228,7 @@ The application uses an OGC ZXY-compliant directory structure for tile caching, 
 │   └── 2020-01-01/               # Another date
 │       └── 15/
 │           └── ...
-└── esri/                          # Esri Wayback provider
+└── esri_wayback/                 # Esri Wayback provider
     ├── 2024-01-15/
     │   └── 15/
     │       └── ...
@@ -229,11 +239,12 @@ The application uses an OGC ZXY-compliant directory structure for tile caching, 
 
 **Cache Features:**
 - ✅ Persistent across app restarts
+- ✅ Unified caching for both `google_earth` and `esri_wayback` providers
 - ✅ LRU eviction when exceeding size limit
 - ✅ TTL-based expiration (configurable)
 - ✅ Atomic metadata updates (temp file + rename)
 - ✅ Automatic index rebuild if corrupted
-- ✅ GDAL-accessible: `/vsicurl/file:///path/cache/{provider}/{date}/{z}/{x}/{y}.jpg`
+- ✅ GDAL-accessible: `/vsicurl/file:///path/cache/{google_earth|esri_wayback}/{date}/{z}/{x}/{y}.jpg`
 
 **Default Configuration:**
 - Max Size: 500 MB
@@ -298,7 +309,7 @@ The frontend dev server runs on http://localhost:5173 with Vite's fast HMR.
 
 ```
 .
-├── app.go                    # Main application controller (Wails bindings)
+├── app.go                    # Main application controller (Wails bindings, ~1,500 lines)
 ├── main.go                   # Entry point
 ├── frontend/
 │   ├── src/
@@ -312,17 +323,32 @@ The frontend dev server runs on http://localhost:5173 with Vite's fast HMR.
 ├── internal/
 │   ├── cache/                # Persistent tile cache
 │   ├── config/               # User settings management
+│   ├── downloads/            # Download orchestration (NEW)
+│   │   ├── common.go         # Shared types, validation, security
+│   │   ├── esri/             # Esri download logic
+│   │   └── googleearth/      # Google Earth download logic
 │   ├── esri/                 # Esri Wayback API client
 │   ├── googleearth/          # Google Earth API client
+│   ├── handlers/             # HTTP handlers (NEW)
+│   │   └── tileserver/       # Tile server for both providers
 │   ├── imagery/              # Image download orchestration
 │   ├── ratelimit/            # Rate limit detection & retry
 │   ├── taskqueue/            # Background task management
+│   ├── utils/                # Utilities (NEW)
+│   │   └── naming/           # Filename and coordinate utilities
 │   ├── video/                # Video export (FFmpeg)
 │   └── wmts/                 # WMTS capabilities parser
 ├── pkg/
 │   └── geotiff/              # GeoTIFF encoding
 └── scripts/                  # Build scripts for all platforms
 ```
+
+**Recent Refactoring:**
+- `app.go` reduced from 3,395 to ~1,500 lines through modularization
+- Download logic extracted to `internal/downloads/` with provider-specific packages
+- Tile serving consolidated in `internal/handlers/tileserver/`
+- Common utilities moved to `internal/utils/naming/`
+- See [MODULARIZATION_COMPLETE.md](MODULARIZATION_COMPLETE.md) for detailed refactoring summary
 
 ---
 
@@ -375,6 +401,7 @@ npx shadcn@latest add [component-name]
 ### Project Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete system architecture, workflows, and edge cases
+- **[MODULARIZATION_COMPLETE.md](MODULARIZATION_COMPLETE.md)** - Refactoring summary: app.go reduced from 3,395 to ~1,500 lines
 - **[GOOGLE_EARTH_API_NOTES.md](GOOGLE_EARTH_API_NOTES.md)** - Detailed API reference for Google Earth integration
 - **[RATE_LIMIT_AND_CACHE_IMPLEMENTATION.md](RATE_LIMIT_AND_CACHE_IMPLEMENTATION.md)** - Implementation details for caching and rate limiting
 - **[AGENTS.md](AGENTS.md)** - Issue tracking workflow with beads (bd)
