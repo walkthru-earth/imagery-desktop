@@ -530,6 +530,7 @@ func isBlankTile(data []byte) bool {
 	// Decode image to check pixel uniformity
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
+		log.Printf("[isBlankTile] Failed to decode image: %v", err)
 		return false // Can't decode, assume it's valid
 	}
 
@@ -538,38 +539,80 @@ func isBlankTile(data []byte) bool {
 		return true // Too small
 	}
 
-	// Sample pixels at various positions
-	samplePoints := []image.Point{
-		{bounds.Min.X + bounds.Dx()/4, bounds.Min.Y + bounds.Dy()/4},
-		{bounds.Min.X + bounds.Dx()/2, bounds.Min.Y + bounds.Dy()/2},
-		{bounds.Min.X + 3*bounds.Dx()/4, bounds.Min.Y + 3*bounds.Dy()/4},
-		{bounds.Min.X + bounds.Dx()/4, bounds.Min.Y + 3*bounds.Dy()/4},
-		{bounds.Min.X + 3*bounds.Dx()/4, bounds.Min.Y + bounds.Dy()/4},
+	// Sample many pixels across the image
+	sampleCount := 0
+	whiteCount := 0
+	blackCount := 0
+	totalR, totalG, totalB := uint64(0), uint64(0), uint64(0)
+
+	// Sample a grid of points
+	stepX := bounds.Dx() / 8
+	stepY := bounds.Dy() / 8
+	if stepX < 1 {
+		stepX = 1
+	}
+	if stepY < 1 {
+		stepY = 1
 	}
 
-	// Get first sample as reference
-	refR, refG, refB, _ := img.At(samplePoints[0].X, samplePoints[0].Y).RGBA()
+	for y := bounds.Min.Y + stepY; y < bounds.Max.Y-stepY; y += stepY {
+		for x := bounds.Min.X + stepX; x < bounds.Max.X-stepX; x += stepX {
+			r, g, b, _ := img.At(x, y).RGBA()
+			totalR += uint64(r)
+			totalG += uint64(g)
+			totalB += uint64(b)
+			sampleCount++
 
-	// Check if all samples are nearly identical (within tolerance)
-	tolerance := uint32(500) // Very small tolerance for "same" color
-	allSame := true
-	for _, pt := range samplePoints[1:] {
-		r, g, b, _ := img.At(pt.X, pt.Y).RGBA()
-		if absDiff(r, refR) > tolerance || absDiff(g, refG) > tolerance || absDiff(b, refB) > tolerance {
-			allSame = false
-			break
+			// Check for white (RGBA values are 0-65535)
+			if r > 63000 && g > 63000 && b > 63000 {
+				whiteCount++
+			}
+			// Check for black
+			if r < 2500 && g < 2500 && b < 2500 {
+				blackCount++
+			}
 		}
 	}
 
-	if allSame {
-		// Check if it's a known blank color (white or near-white)
-		// RGBA values are in 0-65535 range
-		if refR > 60000 && refG > 60000 && refB > 60000 {
-			return true // White/blank
+	if sampleCount == 0 {
+		return false
+	}
+
+	// If more than 90% of samples are white or black, it's blank
+	whitePercent := (whiteCount * 100) / sampleCount
+	blackPercent := (blackCount * 100) / sampleCount
+
+	if whitePercent > 90 {
+		log.Printf("[isBlankTile] Detected blank tile: %d%% white pixels", whitePercent)
+		return true
+	}
+	if blackPercent > 90 {
+		log.Printf("[isBlankTile] Detected blank tile: %d%% black pixels", blackPercent)
+		return true
+	}
+
+	// Also check for very low color variance (uniform gray/beige)
+	avgR := totalR / uint64(sampleCount)
+	avgG := totalG / uint64(sampleCount)
+	avgB := totalB / uint64(sampleCount)
+
+	// Calculate variance
+	varR, varG, varB := uint64(0), uint64(0), uint64(0)
+	for y := bounds.Min.Y + stepY; y < bounds.Max.Y-stepY; y += stepY {
+		for x := bounds.Min.X + stepX; x < bounds.Max.X-stepX; x += stepX {
+			r, g, b, _ := img.At(x, y).RGBA()
+			varR += absDiff64(uint64(r), avgR) * absDiff64(uint64(r), avgR)
+			varG += absDiff64(uint64(g), avgG) * absDiff64(uint64(g), avgG)
+			varB += absDiff64(uint64(b), avgB) * absDiff64(uint64(b), avgB)
 		}
-		if refR < 5000 && refG < 5000 && refB < 5000 {
-			return true // Black/blank
-		}
+	}
+
+	// Very low variance indicates uniform/blank image
+	avgVariance := (varR + varG + varB) / (3 * uint64(sampleCount))
+	// Threshold: variance of ~1000^2 = 1000000 is considered "uniform"
+	if avgVariance < 2000000 {
+		log.Printf("[isBlankTile] Detected blank tile: low variance %d, avg RGB: %d,%d,%d", avgVariance, avgR/257, avgG/257, avgB/257)
+		return true
 	}
 
 	return false
@@ -577,6 +620,14 @@ func isBlankTile(data []byte) bool {
 
 // absDiff returns absolute difference between two uint32 values
 func absDiff(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+// absDiff64 returns absolute difference between two uint64 values
+func absDiff64(a, b uint64) uint64 {
 	if a > b {
 		return a - b
 	}
