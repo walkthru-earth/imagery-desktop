@@ -204,6 +204,10 @@ type App struct {
 	currentTaskID     string                          // Current task ID when running in queue mode
 	taskProgressChan  chan<- taskqueue.TaskProgress   // Channel to forward progress to task worker
 	taskOutputPath    string                          // Output directory for current task
+
+	// Folder open tracking (to avoid opening duplicate windows on Windows)
+	lastOpenedFolders map[string]time.Time // Map of folder path -> last opened time
+	folderOpenMu      sync.Mutex           // Mutex for folder open tracking
 }
 
 // NewApp creates a new App application struct
@@ -250,14 +254,15 @@ func NewApp() *App {
 	log.Printf("Task queue initialized at %s (max concurrent: %d)", queuePath, settings.MaxConcurrentTasks)
 
 	return &App{
-		geClient:     googleearth.NewClient(),
-		esriClient:   esri.NewClient(),
-		tileCache:    tileCache,
-		downloader:   downloader,
-		downloadPath: settings.DownloadPath,
-		settings:     settings,
-		phClient:     phClient,
-		taskQueue:    taskQueue,
+		geClient:          googleearth.NewClient(),
+		esriClient:        esri.NewClient(),
+		tileCache:         tileCache,
+		downloader:        downloader,
+		downloadPath:      settings.DownloadPath,
+		settings:          settings,
+		phClient:          phClient,
+		taskQueue:         taskQueue,
+		lastOpenedFolders: make(map[string]time.Time),
 	}
 }
 
@@ -1272,23 +1277,37 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 
 // OpenDownloadFolder opens the download folder in the system file manager
 func (a *App) OpenDownloadFolder() error {
-	var cmd *exec.Cmd
-	switch goruntime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", a.downloadPath)
-	case "windows":
-		cmd = exec.Command("explorer", a.downloadPath)
-	default: // Linux and others
-		cmd = exec.Command("xdg-open", a.downloadPath)
-	}
-	return cmd.Start()
+	return a.OpenFolder(a.downloadPath)
 }
 
 // OpenFolder opens a specific folder in the OS file explorer
+// On Windows, it tracks recently opened folders to avoid opening duplicate windows
 func (a *App) OpenFolder(path string) error {
 	// Verify the path exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("folder does not exist: %s", path)
+	}
+
+	// Normalize path for consistent tracking
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
+	// On Windows, check if this folder was recently opened to avoid duplicate windows
+	// macOS Finder handles this automatically, but Windows Explorer always opens new windows
+	if goruntime.GOOS == "windows" {
+		a.folderOpenMu.Lock()
+		if lastOpened, exists := a.lastOpenedFolders[absPath]; exists {
+			// Skip if opened within the last 30 seconds
+			if time.Since(lastOpened) < 30*time.Second {
+				a.folderOpenMu.Unlock()
+				log.Printf("Skipping folder open (recently opened): %s", absPath)
+				return nil
+			}
+		}
+		a.lastOpenedFolders[absPath] = time.Now()
+		a.folderOpenMu.Unlock()
 	}
 
 	var cmd *exec.Cmd
