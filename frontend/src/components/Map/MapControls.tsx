@@ -54,16 +54,14 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
           {onAddTask && dates.length > 0 && (
             <Button
               size="default"
-              variant={isRangeMode ? "default" : "outline"}
               onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
               title={isRangeMode ? "Add task for date range" : "Add task for current view"}
+              className="bg-orange-500 hover:bg-orange-600 text-white"
             >
-              <ListPlus className="h-5 w-5" />
-              {isRangeMode && (
-                <span className="ml-1.5 text-sm font-medium">
-                  {Math.abs(rangeEnd - rangeStart) + 1}
-                </span>
-              )}
+              <ListPlus className="h-4 w-4 mr-1.5" />
+              <span className="text-sm">
+                {isRangeMode ? `Add ${Math.abs(rangeEnd - rangeStart) + 1}` : "Add to Queue"}
+              </span>
             </Button>
           )}
           <Button
