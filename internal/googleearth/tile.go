@@ -14,6 +14,16 @@ type Tile struct {
 	Column int
 }
 
+// GetRow implements common.Tile interface
+func (t *Tile) GetRow() int {
+	return t.Row
+}
+
+// GetColumn implements common.Tile interface
+func (t *Tile) GetColumn() int {
+	return t.Column
+}
+
 const MaxLevel = 30
 
 // NewTileFromPath creates a Tile from a quadtree path string

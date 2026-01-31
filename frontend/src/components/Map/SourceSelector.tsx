@@ -45,13 +45,13 @@ export function SourceSelector({ value, onChange, size = "sm", className = "" }:
   // Build options list
   const options: SourceOption[] = [
     {
-      value: "esri",
+      value: "esri_wayback",
       label: "Esri Wayback",
       icon: <Satellite className="h-4 w-4" />,
       category: "built-in",
     },
     {
-      value: "google",
+      value: "google_earth",
       label: "Google Earth",
       icon: <Globe className="h-4 w-4" />,
       category: "built-in",

@@ -7,6 +7,7 @@ require (
 	github.com/posthog/posthog-go v1.9.1
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/image v0.35.0
+	golang.org/x/sync v0.19.0
 )
 
 require (

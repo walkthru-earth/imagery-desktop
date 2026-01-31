@@ -3,7 +3,7 @@
  * Designed to be extensible for future imagery providers
  */
 
-export type ImagerySourceType = "esri" | "google" | string;
+export type ImagerySourceType = "esri_wayback" | "google_earth" | string;
 
 export interface ImageryDate {
   date: string;

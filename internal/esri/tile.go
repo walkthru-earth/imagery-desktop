@@ -12,6 +12,16 @@ type EsriTile struct {
 	Column int
 }
 
+// GetRow implements common.Tile interface
+func (t *EsriTile) GetRow() int {
+	return t.Row
+}
+
+// GetColumn implements common.Tile interface
+func (t *EsriTile) GetColumn() int {
+	return t.Column
+}
+
 const (
 	MaxLevel = 23
 	// Web Mercator constants

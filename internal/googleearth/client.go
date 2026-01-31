@@ -197,6 +197,7 @@ func (c *Client) parseTimeMachineDbRoot(data []byte) error {
 }
 
 // decryptWithKey XOR decrypts data using a specific encryption key
+// This is the core decryption implementation used by both decrypt() and direct calls
 func (c *Client) decryptWithKey(data []byte, key []byte) {
 	if len(key) == 0 {
 		return
@@ -210,6 +211,7 @@ func (c *Client) decryptWithKey(data []byte, key []byte) {
 		if off&7 == 0 {
 			off += 16
 		}
+		// BUG FIX: Use len(key) instead of len(c.encryptionKey)
 		if off >= len(key) {
 			off = (off + 8) % 24
 		}
@@ -369,24 +371,10 @@ func skipField(data []byte, offset int, wireType int) (int, error) {
 	}
 }
 
-// decrypt XOR decrypts data using the encryption key
+// decrypt XOR decrypts data using the client's default encryption key
+// This is a convenience wrapper around decryptWithKey
 func (c *Client) decrypt(data []byte) {
-	if len(c.encryptionKey) == 0 {
-		return
-	}
-
-	off := 16
-	for j := 0; j < len(data); j++ {
-		data[j] ^= c.encryptionKey[off]
-		off++
-
-		if off&7 == 0 {
-			off += 16
-		}
-		if off >= len(c.encryptionKey) {
-			off = (off + 8) % 24
-		}
-	}
+	c.decryptWithKey(data, c.encryptionKey)
 }
 
 // decompress handles the Google Earth compression format

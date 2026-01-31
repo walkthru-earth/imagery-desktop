@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"imagery-desktop/internal/downloads"
 )
 
 // TaskStatus represents the current status of a task
@@ -19,20 +21,9 @@ const (
 	TaskStatusCancelled TaskStatus = "cancelled"
 )
 
-// BoundingBox represents a geographic bounding box (matches app.go definition)
-type BoundingBox struct {
-	South float64 `json:"south"`
-	West  float64 `json:"west"`
-	North float64 `json:"north"`
-	East  float64 `json:"east"`
-}
-
-// GEDateInfo contains date info for Google Earth (matches app.go definition)
-type GEDateInfo struct {
-	Date    string `json:"date"`
-	HexDate string `json:"hexDate"`
-	Epoch   int    `json:"epoch"`
-}
+// Type aliases for downloads package types (used in task serialization)
+type BoundingBox = downloads.BoundingBox
+type GEDateInfo = downloads.GEDateInfo
 
 // VideoExportOptions contains video export settings (matches app.go definition)
 type VideoExportOptions struct {
@@ -86,7 +77,7 @@ type ExportTask struct {
 	CompletedAt string     `json:"completedAt,omitempty"`
 
 	// Export settings
-	Source string      `json:"source"` // "esri" or "google"
+	Source string      `json:"source"` // "esri_wayback" or "google_earth"
 	BBox   BoundingBox `json:"bbox"`
 	Zoom   int         `json:"zoom"`
 	Format string      `json:"format"` // "tiles", "geotiff", "both"

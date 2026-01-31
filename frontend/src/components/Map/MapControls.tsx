@@ -18,8 +18,8 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
   const { state, dispatch } = useImageryContext();
   const mapState = state.maps.single;
   const dates = getAvailableDates(state, "single");
-  const isEsriLoading = mapState.source === "esri" && state.esriDatesLoading;
-  const isGeLoading = mapState.source === "google" && state.geDatesLoading;
+  const isEsriLoading = mapState.source === "esri_wayback" && state.esriDatesLoading;
+  const isGeLoading = mapState.source === "google_earth" && state.geDatesLoading;
   const isLoading = isEsriLoading || isGeLoading;
 
   // Range selection mode
@@ -271,8 +271,8 @@ export function MapControls({
             />
 
             {/* Loading State */}
-            {((state.maps.left.source === "esri" && state.esriDatesLoading) ||
-              (state.maps.left.source === "google" && state.geDatesLoading)) &&
+            {((state.maps.left.source === "esri_wayback" && state.esriDatesLoading) ||
+              (state.maps.left.source === "google_earth" && state.geDatesLoading)) &&
               getAvailableDates(state, "left").length === 0 && (
               <div className="flex flex-col items-center py-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin mb-1" />
@@ -377,8 +377,8 @@ export function MapControls({
             />
 
             {/* Loading State */}
-            {((state.maps.right.source === "esri" && state.esriDatesLoading) ||
-              (state.maps.right.source === "google" && state.geDatesLoading)) &&
+            {((state.maps.right.source === "esri_wayback" && state.esriDatesLoading) ||
+              (state.maps.right.source === "google_earth" && state.geDatesLoading)) &&
               getAvailableDates(state, "right").length === 0 && (
               <div className="flex flex-col items-center py-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin mb-1" />

@@ -5,7 +5,7 @@
 
 import {
   GetTileInfo,
-  GetEsriLayers,
+  GetEsriWaybackDatesForArea,
   GetEsriTileURL,
   GetGoogleEarthTileURL,
   GetGoogleEarthDatesForArea,
@@ -23,7 +23,9 @@ import {
   SetDownloadPath,
   OpenDownloadFolder,
   OpenFolder,
-  StartTileServer,
+  // Cache API
+  GetCacheStats,
+  ClearCache,
   // Task Queue API
   AddExportTask,
   GetTaskQueue,
@@ -56,8 +58,8 @@ export const api = {
     GetTileInfo(bbox, zoom),
 
   // Esri Wayback
-  getEsriLayers: () =>
-    GetEsriLayers(),
+  getEsriWaybackDatesForArea: (bbox: main.BoundingBox, zoom: number) =>
+    GetEsriWaybackDatesForArea(bbox, zoom),
 
   getEsriTileURL: (date: string) =>
     GetEsriTileURL(date),
@@ -69,8 +71,8 @@ export const api = {
     DownloadEsriImageryRange(bbox, zoom, dates, format),
 
   // Google Earth Current
-  getGoogleEarthTileURL: () =>
-    GetGoogleEarthTileURL(),
+  getGoogleEarthTileURL: (date: string) =>
+    GetGoogleEarthTileURL(date),
 
   downloadGoogleEarthImagery: (bbox: main.BoundingBox, zoom: number, format: string) =>
     DownloadGoogleEarthImagery(bbox, zoom, format),
@@ -79,8 +81,8 @@ export const api = {
   getGoogleEarthDatesForArea: (bbox: main.BoundingBox, zoom: number) =>
     GetGoogleEarthDatesForArea(bbox, zoom),
 
-  getGoogleEarthHistoricalTileURL: (quadtree: string, epoch: number) =>
-    GetGoogleEarthHistoricalTileURL(quadtree, epoch),
+  getGoogleEarthHistoricalTileURL: (date: string, hexDate: string, epoch: number) =>
+    GetGoogleEarthHistoricalTileURL(date, hexDate, epoch),
 
   downloadGoogleEarthHistoricalImagery: (
     bbox: main.BoundingBox,
@@ -130,9 +132,14 @@ export const api = {
   openFolder: (path: string) =>
     OpenFolder(path),
 
-  // Tile Server
-  startTileServer: () =>
-    StartTileServer(),
+  // Cache Management
+  getCacheStats: () =>
+    GetCacheStats(),
+
+  clearCache: () =>
+    ClearCache(),
+
+  // Tile Server starts automatically in backend startup()
 
   // Events
   onDownloadProgress: (callback: (progress: any) => void) =>
