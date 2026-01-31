@@ -191,6 +191,11 @@ type App struct {
 	currentDateIndex  int  // Current date being processed in range download
 	totalDatesInRange int  // Total dates in range download
 	taskQueue         *taskqueue.QueueManager // Task queue for background exports
+
+	// Task queue progress tracking
+	currentTaskID     string                          // Current task ID when running in queue mode
+	taskProgressChan  chan<- taskqueue.TaskProgress   // Channel to forward progress to task worker
+	taskOutputPath    string                          // Output directory for current task
 }
 
 // NewApp creates a new App application struct
@@ -464,6 +469,29 @@ func (a *App) emitLog(message string) {
 	}
 }
 
+// emitDownloadProgress emits download progress and forwards to task queue if active
+func (a *App) emitDownloadProgress(progress DownloadProgress) {
+	// Always emit the download-progress event for any listeners
+	wailsRuntime.EventsEmit(a.ctx, "download-progress", progress)
+
+	// If we're running in task queue context, also forward to task progress
+	if a.currentTaskID != "" && a.taskProgressChan != nil {
+		taskProgress := taskqueue.TaskProgress{
+			CurrentPhase:   progress.Status,
+			TotalDates:     progress.TotalDates,
+			CurrentDate:    progress.CurrentDate,
+			TilesTotal:     progress.Total,
+			TilesCompleted: progress.Downloaded,
+			Percent:        progress.Percent,
+		}
+		// Non-blocking send
+		select {
+		case a.taskProgressChan <- taskProgress:
+		default:
+		}
+	}
+}
+
 // findLayerForDate finds the layer matching a date
 func (a *App) findLayerForDate(date string) (*esri.Layer, error) {
 	layers, err := a.esriClient.GetLayers()
@@ -615,7 +643,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 			}
 		}
 
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded:  int(count),
 			Total:       total,
 			Percent:     percent,
@@ -687,7 +715,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("esri", date, bbox, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded: total,
 			Total:      total,
 			Percent:    99,
@@ -709,7 +737,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	}
 
 	// Emit completion
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
@@ -892,7 +920,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		} else {
 			status = fmt.Sprintf("Downloading tile %d/%d", i+1, total)
 		}
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded:  i,
 			Total:       total,
 			Percent:     (i * 100) / total,
@@ -982,7 +1010,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("ge", timestamp, bbox, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded: total,
 			Total:      total,
 			Percent:    99,
@@ -1004,7 +1032,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	}
 
 	// Emit completion
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
@@ -1098,7 +1126,7 @@ func (a *App) DownloadEsriImageryRange(bbox BoundingBox, zoom int, dates []strin
 	}
 
 	// Emit completion
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
@@ -1126,6 +1154,25 @@ func (a *App) OpenDownloadFolder() error {
 		cmd = exec.Command("explorer", a.downloadPath)
 	default: // Linux and others
 		cmd = exec.Command("xdg-open", a.downloadPath)
+	}
+	return cmd.Start()
+}
+
+// OpenFolder opens a specific folder in the OS file explorer
+func (a *App) OpenFolder(path string) error {
+	// Verify the path exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("folder does not exist: %s", path)
+	}
+
+	var cmd *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	default: // Linux and others
+		cmd = exec.Command("xdg-open", path)
 	}
 	return cmd.Start()
 }
@@ -1962,7 +2009,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		} else {
 			status = fmt.Sprintf("Downloading tile %d/%d", processedCount, total)
 		}
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded:  processedCount,
 			Total:       total,
 			Percent:     (processedCount * 100) / total,
@@ -2047,7 +2094,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("ge_historical", dateStr, bbox, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded: total,
 			Total:      total,
 			Percent:    99,
@@ -2069,7 +2116,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 	}
 
 	// Emit completion
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
@@ -2149,7 +2196,7 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 	}
 
 	// Emit completion
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: total,
 		Total:      total,
 		Percent:    100,
@@ -2274,7 +2321,7 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 
 	for i, dateInfo := range dates {
 		log.Printf("[VideoExport] Processing date %d/%d: %s", i+1, len(dates), dateInfo.Date)
-		wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+		a.emitDownloadProgress(DownloadProgress{
 			Downloaded: i,
 			Total:      len(dates),
 			Percent:    (i * 100) / len(dates),
@@ -2383,7 +2430,7 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 	}
 
 	// Export video
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: len(frames),
 		Total:      len(frames),
 		Percent:    99,
@@ -2397,7 +2444,7 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 	a.emitLog(fmt.Sprintf("Video exported successfully: %s", outputPath))
 
 	// Emit completion
-	wailsRuntime.EventsEmit(a.ctx, "download-progress", DownloadProgress{
+	a.emitDownloadProgress(DownloadProgress{
 		Downloaded: len(frames),
 		Total:      len(frames),
 		Percent:    100,
@@ -2685,6 +2732,33 @@ func (a *App) ClearCompletedTasks() {
 func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask, progressChan chan<- taskqueue.TaskProgress) error {
 	log.Printf("[TaskQueue] Executing task: %s - %s", task.ID, task.Name)
 
+	// Set up task context for progress tracking
+	a.mu.Lock()
+	a.currentTaskID = task.ID
+	a.taskProgressChan = progressChan
+	// Create task-specific output directory
+	a.taskOutputPath = filepath.Join(a.downloadPath, task.ID)
+	if err := os.MkdirAll(a.taskOutputPath, 0755); err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("failed to create task output directory: %w", err)
+	}
+	// Save original download path to restore later
+	originalDownloadPath := a.downloadPath
+	a.downloadPath = a.taskOutputPath
+	a.mu.Unlock()
+
+	// Ensure we clean up task context when done
+	defer func() {
+		a.mu.Lock()
+		a.currentTaskID = ""
+		a.taskProgressChan = nil
+		a.downloadPath = originalDownloadPath
+		// Set the output path on the task
+		task.OutputPath = a.taskOutputPath
+		a.taskOutputPath = ""
+		a.mu.Unlock()
+	}()
+
 	// Convert types for internal use
 	bbox := BoundingBox(task.BBox)
 	dates := make([]GEDateInfo, len(task.Dates))
@@ -2696,6 +2770,13 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		}
 	}
 
+	// Enable range download mode for proper progress tracking
+	a.inRangeDownload = true
+	a.totalDatesInRange = len(dates)
+	defer func() {
+		a.inRangeDownload = false
+	}()
+
 	// Track progress
 	totalDates := len(dates)
 	for i, dateInfo := range dates {
@@ -2706,16 +2787,7 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		default:
 		}
 
-		// Update progress
-		progress := taskqueue.TaskProgress{
-			CurrentPhase:   "downloading",
-			CurrentDate:    i + 1,
-			TotalDates:     totalDates,
-			TilesCompleted: 0,
-			TilesTotal:     0,
-			Percent:        (i * 100) / totalDates,
-		}
-		progressChan <- progress
+		a.currentDateIndex = i + 1
 
 		// Download imagery based on source
 		var err error
@@ -2736,15 +2808,14 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 
 	// If video export is requested, do it after all imagery is downloaded
 	if task.VideoExport && task.VideoOpts != nil {
-		progress := taskqueue.TaskProgress{
-			CurrentPhase:   "encoding",
-			CurrentDate:    totalDates,
-			TotalDates:     totalDates,
-			TilesCompleted: 0,
-			TilesTotal:     0,
-			Percent:        95,
-		}
-		progressChan <- progress
+		a.emitDownloadProgress(DownloadProgress{
+			Downloaded:  0,
+			Total:       0,
+			Percent:     95,
+			Status:      "Encoding video...",
+			CurrentDate: totalDates,
+			TotalDates:  totalDates,
+		})
 
 		// Convert video options
 		videoOpts := VideoExportOptions{

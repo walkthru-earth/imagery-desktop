@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Play, Pause, Trash2, GripVertical, CheckCircle, XCircle, Loader2, Clock } from "lucide-react";
+import { Play, Pause, Trash2, GripVertical, CheckCircle, XCircle, Loader2, Clock, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ExportTask, TaskStatus } from "@/types";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ interface TaskItemProps {
   onCancel?: (id: string) => void;
   onDelete?: (id: string) => void;
   onSelect?: (task: ExportTask) => void;
+  onOpenFolder?: (path: string) => void;
   isDragging?: boolean;
 }
 
@@ -35,10 +36,12 @@ export function TaskItem({
   onCancel,
   onDelete,
   onSelect,
+  onOpenFolder,
   isDragging,
 }: TaskItemProps) {
   const canDelete = task.status !== "running";
   const canCancel = task.status === "running" || task.status === "pending";
+  const canOpenFolder = task.status === "completed" && task.outputPath;
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "";
@@ -111,11 +114,25 @@ export function TaskItem({
         )}
       </div>
 
-      {/* Actions - always visible for pending, hover for others */}
+      {/* Actions - always visible for pending/completed, hover for others */}
       <div className={cn(
         "flex items-center gap-1 transition-opacity",
-        task.status === "pending" ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        (task.status === "pending" || task.status === "completed") ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       )}>
+        {canOpenFolder && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenFolder?.(task.outputPath!);
+            }}
+            title="Open output folder"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+          </Button>
+        )}
         {canCancel && (
           <Button
             variant="ghost"

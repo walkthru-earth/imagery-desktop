@@ -21,6 +21,7 @@ import {
   GetDownloadPath,
   SetDownloadPath,
   OpenDownloadFolder,
+  OpenFolder,
   StartTileServer,
   // Task Queue API
   AddExportTask,
@@ -121,6 +122,9 @@ export const api = {
 
   openDownloadFolder: () =>
     OpenDownloadFolder(),
+
+  openFolder: (path: string) =>
+    OpenFolder(path),
 
   // Tile Server
   startTileServer: () =>

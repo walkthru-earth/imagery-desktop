@@ -279,6 +279,7 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask, refreshTr
             onDelete={handleDeleteTask}
             onSelect={(task) => onTaskSelect?.(task)}
             onReorder={handleReorderTask}
+            onOpenFolder={(path) => api.openFolder(path).catch(console.error)}
           />
         )}
       </div>
