@@ -172,38 +172,33 @@ function App() {
   // ===================
   // Esri Dates (Per Map - with local changes detection)
   // ===================
-  // Fetch initial global Esri layers for fallback (before map is ready)
-  useEffect(() => {
-    console.log("[App] Fetching initial Esri layers for fallback");
-    api
-      .getEsriLayers()
-      .then((dates) => {
-        // Only set if we don't have dates yet (will be replaced by viewport-specific dates)
-        if (dates && dates.length > 0 && state.esriDates.length === 0) {
-          console.log("[App] Setting initial Esri dates:", dates.length);
-          dispatch({ type: "SET_ESRI_DATES", dates });
-        }
-      })
-      .catch((error) => {
-        console.error("[App] Failed to fetch initial Esri dates:", error);
-      });
-  }, []); // Only run once on mount
-
   // Use viewport-based Esri dates that only show dates with actual imagery changes
-  const singleEsriDates = useEsriDates(
+  // No global fallback - wait for viewport-specific dates to load
+  const { dates: singleEsriDates, isLoading: singleEsriLoading } = useEsriDates(
     singleMap,
     state.viewMode === "single" && state.maps.single.source === "esri"
   );
 
-  const leftEsriDates = useEsriDates(
+  const { dates: leftEsriDates, isLoading: leftEsriLoading } = useEsriDates(
     leftMap,
     state.viewMode === "split" && state.maps.left.source === "esri"
   );
 
-  const rightEsriDates = useEsriDates(
+  const { dates: rightEsriDates, isLoading: rightEsriLoading } = useEsriDates(
     rightMap,
     state.viewMode === "split" && state.maps.right.source === "esri"
   );
+
+  // Track if any Esri dates are loading
+  const esriDatesLoading =
+    (state.viewMode === "single" && state.maps.single.source === "esri" && singleEsriLoading) ||
+    (state.viewMode === "split" && state.maps.left.source === "esri" && leftEsriLoading) ||
+    (state.viewMode === "split" && state.maps.right.source === "esri" && rightEsriLoading);
+
+  // Dispatch loading state to context
+  useEffect(() => {
+    dispatch({ type: "SET_ESRI_DATES_LOADING", loading: esriDatesLoading });
+  }, [esriDatesLoading, dispatch]);
 
   // Update context when Esri dates change (use active map's dates as shared state)
   // Dispatch whenever dates change AND source is esri (even if empty, to replace global dates)

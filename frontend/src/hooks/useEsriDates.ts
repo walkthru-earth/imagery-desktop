@@ -12,8 +12,9 @@ import type { AvailableDate } from "@/types";
 export function useEsriDates(
   map: maplibregl.Map | null,
   enabled: boolean
-): AvailableDate[] {
+): { dates: AvailableDate[]; isLoading: boolean } {
   const [dates, setDates] = useState<AvailableDate[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const isLoadingRef = useRef(false);
   const lastFetchKeyRef = useRef<string>("");
 
@@ -48,6 +49,7 @@ export function useEsriDates(
 
       try {
         isLoadingRef.current = true;
+        setIsLoading(true);
         console.log("[useEsriDates] Fetching local changes for zoom:", zoom);
 
         const bbox = createBoundingBox(
@@ -73,6 +75,7 @@ export function useEsriDates(
         console.error("[useEsriDates] Error fetching dates:", error);
       } finally {
         isLoadingRef.current = false;
+        setIsLoading(false);
       }
     },
     [] // No dependencies - uses refs for mutable state
@@ -82,15 +85,21 @@ export function useEsriDates(
   useEffect(() => {
     if (!map || !enabled) {
       console.log("[useEsriDates] Hook disabled or no map, enabled:", enabled);
+      // Reset state when disabled
+      if (!enabled) {
+        setDates([]);
+        setIsLoading(false);
+        lastFetchKeyRef.current = "";
+      }
       return;
     }
 
     console.log("[useEsriDates] Hook enabled, setting up listeners");
 
-    // Create debounced version (800ms delay for Esri since it's slower)
+    // Create debounced version (300ms delay - faster response)
     const debouncedFetch = debounce(() => {
       fetchDates(map);
-    }, 800);
+    }, 300);
 
     // Initial fetch - do it immediately when enabled
     const doInitialFetch = () => {
@@ -115,5 +124,5 @@ export function useEsriDates(
     };
   }, [map, enabled, fetchDates]);
 
-  return dates;
+  return { dates, isLoading };
 }

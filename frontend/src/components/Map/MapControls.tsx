@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useState } from "react";
-import { ListPlus, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, MoveVertical } from "lucide-react";
+import { ListPlus, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, MoveVertical, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -18,6 +18,7 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
   const { state, dispatch } = useImageryContext();
   const mapState = state.maps.single;
   const dates = getAvailableDates(state, "single");
+  const isEsriLoading = mapState.source === "esri" && state.esriDatesLoading;
 
   // Range selection mode
   const [isRangeMode, setIsRangeMode] = useState(false);
@@ -79,6 +80,14 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
             <Calendar className="h-5 w-5" />
           </Button>
         </div>
+
+        {/* Loading State for Esri */}
+        {isEsriLoading && dates.length === 0 && (
+          <div className="flex items-center justify-center py-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            <span className="text-sm">Loading available dates...</span>
+          </div>
+        )}
 
         {/* Date Slider */}
         {dates.length > 0 && (
@@ -259,6 +268,14 @@ export function MapControls({
               className="w-full"
             />
 
+            {/* Loading State for Esri */}
+            {state.maps.left.source === "esri" && state.esriDatesLoading && getAvailableDates(state, "left").length === 0 && (
+              <div className="flex flex-col items-center py-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin mb-1" />
+                <span className="text-xs">Loading...</span>
+              </div>
+            )}
+
             {/* Date Slider - Vertical */}
             {getAvailableDates(state, "left").length > 0 && (
               <div className="flex flex-col items-center space-y-2 w-full">
@@ -354,6 +371,14 @@ export function MapControls({
               size="sm"
               className="w-full"
             />
+
+            {/* Loading State for Esri */}
+            {state.maps.right.source === "esri" && state.esriDatesLoading && getAvailableDates(state, "right").length === 0 && (
+              <div className="flex flex-col items-center py-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin mb-1" />
+                <span className="text-xs">Loading...</span>
+              </div>
+            )}
 
             {/* Date Slider - Vertical */}
             {getAvailableDates(state, "right").length > 0 && (

@@ -19,6 +19,7 @@ export interface MapState {
 export interface ImageryState {
   viewMode: ViewMode;
   esriDates: AvailableDate[]; // Shared across all maps
+  esriDatesLoading: boolean; // True when fetching viewport-based dates
   maps: {
     single: MapState;
     left: MapState;
@@ -37,6 +38,7 @@ export interface ImageryState {
 export type ImageryAction =
   | { type: "SET_VIEW_MODE"; mode: ViewMode }
   | { type: "SET_ESRI_DATES"; dates: AvailableDate[] }
+  | { type: "SET_ESRI_DATES_LOADING"; loading: boolean }
   | { type: "SET_MAP_SOURCE"; map: MapKey; source: ImagerySource }
   | { type: "UPDATE_GE_DATES"; map: MapKey; dates: GEAvailableDate[] }
   | { type: "SET_DATE_INDEX"; map: MapKey; index: number }
@@ -62,6 +64,7 @@ const initialMapState: MapState = {
 const initialState: ImageryState = {
   viewMode: "single",
   esriDates: [],
+  esriDatesLoading: false,
   maps: {
     single: { ...initialMapState },
     left: { ...initialMapState },
@@ -96,6 +99,12 @@ function imageryReducer(
       return {
         ...state,
         esriDates: action.dates,
+      };
+
+    case "SET_ESRI_DATES_LOADING":
+      return {
+        ...state,
+        esriDatesLoading: action.loading,
       };
 
     case "SET_MAP_SOURCE":

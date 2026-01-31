@@ -240,10 +240,15 @@ func (c *Client) GetAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
 		}
 	}
 
-	// Now fetch actual capture dates for each release with local changes
-	// and deduplicate by source date (multiple releases can have same imagery)
-	var datedTiles []*DatedTile
-	seenSourceDates := make(map[string]bool)
+	// Fetch actual capture dates in parallel for speed
+	type dateResult struct {
+		releaseNum  int
+		captureDate time.Time
+		layer       *Layer
+	}
+
+	results := make(chan dateResult, len(releaseNums))
+	var wg sync.WaitGroup
 
 	for _, releaseNum := range releaseNums {
 		layer, ok := layerByID[releaseNum]
@@ -251,16 +256,29 @@ func (c *Client) GetAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
 			continue
 		}
 
-		// Get actual capture date from metadata
-		captureDate, err := c.getTileDate(layer, tile)
-		if err != nil {
-			captureDate = layer.Date
-		}
+		wg.Add(1)
+		go func(rn int, l *Layer) {
+			defer wg.Done()
+			captureDate, err := c.getTileDate(l, tile)
+			if err != nil {
+				captureDate = l.Date
+			}
+			results <- dateResult{rn, captureDate, l}
+		}(releaseNum, layer)
+	}
 
-		// Create a key from the source date (date only, no time precision)
-		sourceDateKey := captureDate.Format("2006-01-02")
+	// Close results channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
-		// Skip if we already have a release with this source date
+	// Collect results and deduplicate by source date
+	var datedTiles []*DatedTile
+	seenSourceDates := make(map[string]bool)
+
+	for result := range results {
+		sourceDateKey := result.captureDate.Format("2006-01-02")
 		if seenSourceDates[sourceDateKey] {
 			continue
 		}
@@ -268,11 +286,16 @@ func (c *Client) GetAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
 
 		datedTiles = append(datedTiles, &DatedTile{
 			Tile:        tile,
-			Layer:       layer,
-			CaptureDate: captureDate,
-			LayerDate:   layer.Date,
+			Layer:       result.layer,
+			CaptureDate: result.captureDate,
+			LayerDate:   result.layer.Date,
 		})
 	}
+
+	// Sort by layer date (newest first) since parallel fetch loses ordering
+	sort.Slice(datedTiles, func(i, j int) bool {
+		return datedTiles[i].LayerDate.After(datedTiles[j].LayerDate)
+	})
 
 	return datedTiles, nil
 }
