@@ -81,25 +81,36 @@ rateLimitHandler.ManualRetry("google")
 - TTL-based expiration for old tiles
 - Automatic metadata rebuild if index corrupted
 
-**Cache Structure:**
+**Cache Structure (OGC-Compliant):**
 ```
 ~/.walkthru-earth/imagery-desktop/cache/
-├── cache_index.json          # Metadata index
-├── google/                    # Google Earth tiles
-│   ├── 15/                   # Zoom level 15
-│   │   ├── 16384/            # X coordinate
-│   │   │   ├── 8192.jpg      # Y coordinate (current imagery)
-│   │   │   ├── 8192_2020-01-01.jpg  # Historical imagery
-│   │   │   └── 8192_2024-12-31.jpg
-│   │   └── 16385/
-│   │       └── 8193.jpg
-│   └── 16/
-│       └── ...
-└── esri/                     # Esri tiles
-    ├── 15/
-    │   └── ...
-    └── 16/
-        └── ...
+├── cache_index.json                    # Metadata index
+├── google/                              # Google Earth provider
+│   ├── 2024-12-31/                     # Date as directory (OGC temporal standard)
+│   │   ├── 15/                         # Zoom level 15
+│   │   │   ├── 16384/                  # X coordinate
+│   │   │   │   └── 8192.jpg            # Y coordinate
+│   │   │   └── 16385/
+│   │   │       └── 8193.jpg
+│   │   └── 16/
+│   │       └── ...
+│   └── 2020-01-01/                     # Another date
+│       └── 15/
+│           └── ...
+└── esri/                                # Esri provider
+    ├── 2024-01-15/
+    │   └── 15/
+    │       └── ...
+    └── 2023-06-30/
+        └── 15/
+            └── ...
+```
+
+**OGC Compliance Benefits:**
+- ✅ Compatible with GeoServer, PyGeoAPI, QGIS, GDAL
+- ✅ Standard temporal tile structure (date as directory)
+- ✅ Can be served directly by OGC-compliant map servers
+- ✅ GDAL can access via `/vsicurl/file:///path/cache/{provider}/{date}/{z}/{x}/{y}.jpg`
 ```
 
 **Usage:**

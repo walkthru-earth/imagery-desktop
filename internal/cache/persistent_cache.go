@@ -37,7 +37,8 @@ type TileMetadata struct {
 }
 
 // NewPersistentTileCache creates a new persistent tile cache
-// Cache structure: baseDir/{provider}/{z}/{x}/{y}.jpg
+// Cache structure (OGC-compliant): baseDir/{provider}/{date}/{z}/{x}/{y}.jpg
+// Date directory allows temporal data organization compatible with GeoServer, QGIS, GDAL
 // Metadata index: baseDir/cache_index.json
 func NewPersistentTileCache(baseDir string, maxSizeMB int, ttlDays int) (*PersistentTileCache, error) {
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
@@ -176,19 +177,21 @@ func (c *PersistentTileCache) buildKey(provider string, z, x, y int, date string
 }
 
 // buildFilePath creates the OGC ZXY file path for a tile
-// Structure: {baseDir}/{provider}/{z}/{x}/{y}.jpg
-// Historical: {baseDir}/{provider}/{z}/{x}/{y}_{date}.jpg
+// Structure (OGC-compliant with date as directory):
+// {baseDir}/{provider}/{date}/{z}/{x}/{y}.jpg
+// Date is sanitized (slashes/colons replaced with hyphens)
 func (c *PersistentTileCache) buildFilePath(meta *TileMetadata) string {
 	filename := fmt.Sprintf("%d.jpg", meta.Y)
-	if meta.Date != "" {
-		// Include date in filename for historical imagery
-		// Sanitize date for filesystem (replace slashes/colons)
-		sanitizedDate := strings.ReplaceAll(meta.Date, "/", "-")
-		sanitizedDate = strings.ReplaceAll(sanitizedDate, ":", "-")
-		filename = fmt.Sprintf("%d_%s.jpg", meta.Y, sanitizedDate)
+
+	// Date must be provided - sanitize for filesystem
+	dateDir := meta.Date
+	if dateDir != "" {
+		// Sanitize date for filesystem (replace slashes/colons with hyphens)
+		dateDir = strings.ReplaceAll(dateDir, "/", "-")
+		dateDir = strings.ReplaceAll(dateDir, ":", "-")
 	}
 
-	return filepath.Join(c.baseDir, meta.Provider, fmt.Sprintf("%d", meta.Z),
+	return filepath.Join(c.baseDir, meta.Provider, dateDir, fmt.Sprintf("%d", meta.Z),
 		fmt.Sprintf("%d", meta.X), filename)
 }
 
@@ -378,31 +381,22 @@ func (c *PersistentTileCache) rebuildMetadata() error {
 			return nil
 		}
 
-		// Parse path: {baseDir}/{provider}/{z}/{x}/{y}.jpg or {y}_{date}.jpg
+		// Parse path: {baseDir}/{provider}/{date}/{z}/{x}/{y}.jpg
 		relPath, _ := filepath.Rel(c.baseDir, path)
 		parts := strings.Split(relPath, string(os.PathSeparator))
 
-		if len(parts) < 4 {
-			return nil // Invalid path structure
+		if len(parts) < 5 {
+			return nil // Invalid path structure (need provider/date/z/x/y.jpg)
 		}
 
 		provider := parts[0]
-		z, _ := parseIntSafe(parts[1])
-		x, _ := parseIntSafe(parts[2])
+		date := parts[1] // Date is now a directory
+		z, _ := parseIntSafe(parts[2])
+		x, _ := parseIntSafe(parts[3])
 
-		// Parse Y and optional date from filename
-		filename := strings.TrimSuffix(parts[3], ".jpg")
-		var y int
-		var date string
-
-		if strings.Contains(filename, "_") {
-			// Has date: y_date.jpg
-			fileParts := strings.SplitN(filename, "_", 2)
-			y, _ = parseIntSafe(fileParts[0])
-			date = fileParts[1]
-		} else {
-			y, _ = parseIntSafe(filename)
-		}
+		// Parse Y from filename
+		filename := strings.TrimSuffix(parts[4], ".jpg")
+		y, _ := parseIntSafe(filename)
 
 		// Create metadata
 		key := c.buildKey(provider, z, x, y, date)
