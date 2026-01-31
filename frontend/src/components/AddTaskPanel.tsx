@@ -134,6 +134,7 @@ export function AddTaskPanel({
   const handleAddToQueue = async () => {
     if (!bbox) return;
     setIsSubmitting(true);
+    console.log("[AddTaskPanel] Starting add to queue...");
 
     try {
       let dates: GEDateInfo[];
@@ -150,6 +151,7 @@ export function AddTaskPanel({
           epoch: singleEpoch || 0,
         }];
       }
+      console.log("[AddTaskPanel] Dates:", dates);
 
       const taskName = isRangeMode
         ? `${source === "esri" ? "Esri" : "Google Earth"} ${dates.length} dates (Z${exportZoom})`
@@ -176,6 +178,15 @@ export function AddTaskPanel({
           quality: videoQuality,
         });
       }
+      console.log("[AddTaskPanel] VideoOpts:", videoOpts);
+
+      // Create bbox as main.BoundingBox
+      const taskBbox = new main.BoundingBox({
+        south: bbox.south,
+        west: bbox.west,
+        north: bbox.north,
+        east: bbox.east,
+      });
 
       const task = new main.TaskQueueExportTask({
         id: "",
@@ -184,7 +195,7 @@ export function AddTaskPanel({
         priority: 0,
         createdAt: new Date().toISOString(),
         source: source === "esri" ? "esri" : "google",
-        bbox,
+        bbox: taskBbox,
         zoom: exportZoom,
         format,
         dates,
@@ -199,17 +210,24 @@ export function AddTaskPanel({
           percent: 0,
         },
       });
+      console.log("[AddTaskPanel] Task created:", task);
 
+      console.log("[AddTaskPanel] Calling api.addExportTask...");
       await api.addExportTask(task);
+      console.log("[AddTaskPanel] Task added successfully!");
+
       onTaskAdded?.();
       onClose();
 
+      console.log("[AddTaskPanel] Checking queue status...");
       const status = await api.getTaskQueueStatus();
       if (!status.isRunning) {
+        console.log("[AddTaskPanel] Starting queue...");
         await api.startTaskQueue();
       }
+      console.log("[AddTaskPanel] Done!");
     } catch (error) {
-      console.error("Failed to add task to queue:", error);
+      console.error("[AddTaskPanel] Failed to add task to queue:", error);
       alert("Failed to add task to queue: " + error);
     } finally {
       setIsSubmitting(false);
