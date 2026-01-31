@@ -1571,9 +1571,9 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 // If the tile doesn't exist at the requested zoom, it tries lower zoom levels (z-1, z-2, etc.)
 // When using a lower zoom tile, it extracts and upscales the correct portion to match the original tile
 // Returns the tile data and the zoom level that succeeded, or error if all attempts fail
-func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, hexDate string, maxFallbackLevels int) ([]byte, int, error) {
+func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, date, hexDate string, maxFallbackLevels int) ([]byte, int, error) {
 	// Try the requested zoom first
-	data, err := a.fetchHistoricalGETile(tile, hexDate)
+	data, err := a.fetchHistoricalGETile(tile, date, hexDate)
 	if err == nil {
 		return data, tile.Level, nil
 	}
@@ -1601,7 +1601,7 @@ func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, hexD
 		}
 
 		log.Printf("[ZoomFallback] Trying zoom %d (tile: %s)...", lowerZoom, lowerTile.Path)
-		data, err := a.fetchHistoricalGETile(lowerTile, hexDate)
+		data, err := a.fetchHistoricalGETile(lowerTile, date, hexDate)
 		if err == nil {
 			log.Printf("[ZoomFallback] SUCCESS at zoom %d, extracting quadrant for original tile", lowerZoom)
 
@@ -1699,13 +1699,15 @@ func (a *App) extractQuadrantFromFallbackTile(data []byte, origRow, origCol, ori
 
 // fetchHistoricalGETile fetches a historical tile for the given GE tile coordinates and hexDate
 // It handles epoch lookup and fallback to nearest date
-func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]byte, error) {
+// date: human-readable date (YYYY-MM-DD) for cache storage
+// hexDate: hex date for Google API tile fetching
+func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string) ([]byte, error) {
 	// Check cache first
 	if a.tileCache != nil {
-		cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, hexDate)
+		cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, date)
 		if cachedData, found := a.tileCache.Get(cacheKey); found {
 			if a.devMode {
-				log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, hexDate)
+				log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, date)
 			}
 			return cachedData, nil
 		}
@@ -1762,9 +1764,9 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 	// Try fetching with the protobuf-reported epoch first
 	data, err := a.geClient.FetchHistoricalTile(tile, epoch, foundHexDate)
 	if err == nil {
-		// Cache the result using foundHexDate (the actual date we fetched)
+		// Cache the result using human-readable date for OGC compliance
 		if a.tileCache != nil {
-			a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, foundHexDate, data)
+			a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
 		}
 		return data, nil
 	}
@@ -1797,9 +1799,9 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 	for _, ef := range epochList {
 		data, err := a.geClient.FetchHistoricalTile(tile, ef.epoch, foundHexDate)
 		if err == nil {
-			// Cache the result using foundHexDate (the actual date we fetched)
+			// Cache the result using human-readable date for OGC compliance
 			if a.tileCache != nil {
-				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, foundHexDate, data)
+				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
 			}
 			return data, nil
 		}
@@ -1827,9 +1829,9 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		log.Printf("[DEBUG fetchHistoricalGETile] Trying known-good epoch %d...", knownEpoch)
 		data, err := a.geClient.FetchHistoricalTile(tile, knownEpoch, foundHexDate)
 		if err == nil {
-			// Cache the result using foundHexDate (the actual date we fetched)
+			// Cache the result using human-readable date for OGC compliance
 			if a.tileCache != nil {
-				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, foundHexDate, data)
+				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
 			}
 			return data, nil
 		}
@@ -1926,7 +1928,7 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 
 			// Fetch from source if not cached (with full epoch fallback)
 			if data == nil {
-				data, err = a.fetchHistoricalGETile(tile, hexDate)
+				data, err = a.fetchHistoricalGETile(tile, date, hexDate)
 				if err != nil {
 					log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
 					continue
@@ -2281,7 +2283,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 					maxFallback = 6
 				}
 
-				data, actualZoom, err := a.fetchHistoricalGETileWithZoomFallback(job.tile, hexDate, maxFallback)
+				data, actualZoom, err := a.fetchHistoricalGETileWithZoomFallback(job.tile, dateStr, hexDate, maxFallback)
 				if err != nil {
 					log.Printf("[GEHistorical] Failed to download tile %s (tried zoom %d to %d): %v",
 						job.tile.Path, zoom, max(zoom-maxFallback, 10), err)
