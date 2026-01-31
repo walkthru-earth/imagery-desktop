@@ -235,8 +235,8 @@ func (qm *QueueManager) AddTask(task *ExportTask) error {
 		return err
 	}
 
-	// Notify
-	qm.emitQueueUpdate()
+	// Notify (while holding lock)
+	qm.emitQueueUpdateLocked()
 
 	// Signal worker
 	select {
@@ -265,14 +265,17 @@ func (qm *QueueManager) GetTask(id string) (*ExportTask, error) {
 func (qm *QueueManager) GetAllTasks() []*ExportTask {
 	qm.mu.RLock()
 	defer qm.mu.RUnlock()
+	return qm.getAllTasksUnlocked()
+}
 
+// getAllTasksUnlocked returns all tasks without locking (caller must hold lock)
+func (qm *QueueManager) getAllTasksUnlocked() []*ExportTask {
 	result := make([]*ExportTask, 0, len(qm.taskOrder))
 	for _, id := range qm.taskOrder {
 		if task, exists := qm.tasks[id]; exists {
 			result = append(result, task)
 		}
 	}
-
 	return result
 }
 
@@ -327,7 +330,7 @@ func (qm *QueueManager) UpdateTask(id string, updates map[string]interface{}) er
 		return err
 	}
 
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 	return nil
 }
 
@@ -365,7 +368,7 @@ func (qm *QueueManager) DeleteTask(id string) error {
 	// Save state
 	qm.saveState()
 
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 	log.Printf("[TaskQueue] Deleted task: %s", id)
 	return nil
 }
@@ -421,7 +424,7 @@ func (qm *QueueManager) ReorderTask(id string, newIndex int) error {
 	// Save state
 	qm.saveState()
 
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 	log.Printf("[TaskQueue] Reordered task %s to position %d", id, newIndex)
 	return nil
 }
@@ -452,7 +455,7 @@ func (qm *QueueManager) CancelTask(id string) error {
 	// Save to disk
 	qm.saveTask(task)
 
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 	log.Printf("[TaskQueue] Cancelled task: %s", id)
 	return nil
 }
@@ -491,7 +494,7 @@ func (qm *QueueManager) PauseQueue() error {
 	qm.isPaused = true
 	qm.saveState()
 
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 	log.Printf("[TaskQueue] Queue paused (will stop after current task)")
 	return nil
 }
@@ -522,7 +525,11 @@ func (qm *QueueManager) StopQueue() {
 func (qm *QueueManager) GetStatus() QueueStatus {
 	qm.mu.RLock()
 	defer qm.mu.RUnlock()
+	return qm.getStatusUnlocked()
+}
 
+// getStatusUnlocked returns status without locking (caller must hold lock)
+func (qm *QueueManager) getStatusUnlocked() QueueStatus {
 	completed := 0
 	pending := 0
 	for _, task := range qm.tasks {
@@ -666,14 +673,23 @@ func (qm *QueueManager) worker() {
 	}
 }
 
-// emitQueueUpdate emits queue update events (status + full task list)
-func (qm *QueueManager) emitQueueUpdate() {
+// emitQueueUpdateLocked emits queue update events while already holding the lock
+// IMPORTANT: Caller MUST hold qm.mu lock when calling this
+func (qm *QueueManager) emitQueueUpdateLocked() {
 	if qm.onQueueUpdate != nil {
-		qm.onQueueUpdate(qm.GetStatus())
+		qm.onQueueUpdate(qm.getStatusUnlocked())
 	}
 	if qm.onTasksChanged != nil {
-		qm.onTasksChanged(qm.GetAllTasks())
+		qm.onTasksChanged(qm.getAllTasksUnlocked())
 	}
+}
+
+// emitQueueUpdate emits queue update events (acquires lock itself)
+// Use this when NOT already holding the lock
+func (qm *QueueManager) emitQueueUpdate() {
+	qm.mu.RLock()
+	defer qm.mu.RUnlock()
+	qm.emitQueueUpdateLocked()
 }
 
 // SortByPriority sorts tasks by priority (higher first)
@@ -707,7 +723,7 @@ func (qm *QueueManager) SortByPriority() {
 	qm.taskOrder = newOrder
 
 	qm.saveState()
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 }
 
 // ClearCompleted removes all completed tasks
@@ -730,7 +746,7 @@ func (qm *QueueManager) ClearCompleted() {
 	qm.taskOrder = newOrder
 
 	qm.saveState()
-	qm.emitQueueUpdate()
+	qm.emitQueueUpdateLocked()
 	log.Printf("[TaskQueue] Cleared completed/failed/cancelled tasks")
 }
 
