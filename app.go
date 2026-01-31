@@ -1311,7 +1311,12 @@ func (a *App) exportTimelapseVideoInternal(bbox BoundingBox, zoom int, dates []G
 
 // ReExportVideo re-exports video from a completed task with new presets
 func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string) error {
-	log.Printf("[ReExport] Starting re-export for task %s with presets: %v", taskID, presets)
+	log.Printf("[ReExport] Starting re-export for task %s with presets: %v, format: %s", taskID, presets, videoFormat)
+
+	// Validate video format
+	if videoFormat != "mp4" && videoFormat != "gif" {
+		return fmt.Errorf("invalid video format: %s (must be 'mp4' or 'gif')", videoFormat)
+	}
 
 	// Get the task from the queue
 	task, err := a.taskQueue.GetTask(taskID)
@@ -1331,11 +1336,17 @@ func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string)
 		return fmt.Errorf("task has no video options")
 	}
 
-	// Convert types for internal use
-	bbox := BoundingBox(task.BBox)
-	dates := make([]GEDateInfo, len(task.Dates))
+	// Convert types for video manager
+	bbox := video.BoundingBox{
+		South: task.BBox.South,
+		West:  task.BBox.West,
+		North: task.BBox.North,
+		East:  task.BBox.East,
+	}
+
+	dates := make([]video.DateInfo, len(task.Dates))
 	for i, d := range task.Dates {
-		dates[i] = GEDateInfo{
+		dates[i] = video.DateInfo{
 			Date:    d.Date,
 			HexDate: d.HexDate,
 			Epoch:   d.Epoch,
@@ -1353,25 +1364,25 @@ func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string)
 
 	// Export for each preset
 	log.Printf("[ReExport] Starting export of %d preset(s): %v", len(presets), presets)
-	a.emitLog(fmt.Sprintf("Re-exporting %d preset(s): %v", len(presets), presets))
+	a.emitLog(fmt.Sprintf("Re-exporting %d preset(s) as %s: %v", len(presets), videoFormat, presets))
 
 	successCount := 0
 	failedPresets := []string{}
 
 	for i, presetID := range presets {
-		log.Printf("[ReExport] Exporting preset %d/%d: %s", i+1, len(presets), presetID)
+		log.Printf("[ReExport] Exporting preset %d/%d: %s (format: %s)", i+1, len(presets), presetID, videoFormat)
 
 		a.emitDownloadProgress(DownloadProgress{
 			Downloaded:  i,
 			Total:       len(presets),
 			Percent:     (i * 100) / len(presets),
-			Status:      fmt.Sprintf("Exporting %s (%d/%d)", presetID, i+1, len(presets)),
+			Status:      fmt.Sprintf("Exporting %s as %s (%d/%d)", presetID, videoFormat, i+1, len(presets)),
 			CurrentDate: i + 1,
 			TotalDates:  len(presets),
 		})
 
-		// Create video options for this preset
-		videoOpts := VideoExportOptions{
+		// Create video options for this preset using video manager types
+		videoOpts := video.TimelapseOptions{
 			Preset:             presetID,
 			CropX:              task.VideoOpts.CropX,
 			CropY:              task.VideoOpts.CropY,
@@ -1390,8 +1401,8 @@ func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string)
 			Quality:            task.VideoOpts.Quality,
 		}
 
-		// Use internal function with openFolder=false to avoid opening folder multiple times
-		if err := a.exportTimelapseVideoInternal(bbox, task.Zoom, dates, task.Source, videoOpts, false); err != nil {
+		// Use video manager for export (no folder opening)
+		if err := a.videoManager.ExportTimelapseNoOpen(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
 			log.Printf("[ReExport] Failed to export preset %s: %v", presetID, err)
 			a.emitLog(fmt.Sprintf("❌ Failed to export preset %s: %v", presetID, err))
 			failedPresets = append(failedPresets, presetID)
