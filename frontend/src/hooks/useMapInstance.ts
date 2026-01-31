@@ -22,7 +22,8 @@ export function useMapInstance(
   theme: "light" | "dark",
   onStyleLoad?: () => void,
   initialCenter?: [number, number],
-  initialZoom?: number
+  initialZoom?: number,
+  attributionPosition: "bottom-left" | "bottom-right" = "bottom-right"
 ): maplibregl.Map | null {
   const [map, setMap] = useState<maplibregl.Map | null>(null);
 
@@ -69,7 +70,7 @@ export function useMapInstance(
         compact: false, // Expand by default to show branding
         customAttribution: attributionHtml,
       }),
-      "bottom-right"
+      attributionPosition
     );
 
     // Wait for style to load before making map available

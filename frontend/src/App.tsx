@@ -178,7 +178,8 @@ function App() {
     effectiveTheme,
     handleLeftStyleLoad,
     initialCenter,
-    initialZoom
+    initialZoom,
+    "bottom-left" // Attribution on left for left map
   );
 
   const rightMap = useMapInstance(
