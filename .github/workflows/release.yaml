@@ -91,9 +91,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p FFmpeg
-          # Download static FFmpeg build for Linux
-          curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o FFmpeg/ffmpeg.tar.xz
+          # Download static FFmpeg build from BtbN GitHub releases (reliable mirror)
+          curl -L "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" -o FFmpeg/ffmpeg.tar.xz
           cd FFmpeg && tar -xf ffmpeg.tar.xz --strip-components=1 && rm ffmpeg.tar.xz
+          # The binary is in bin/ subdirectory
+          mv bin/ffmpeg . 2>/dev/null || true
           chmod +x ffmpeg
           ./ffmpeg -version | head -1
 
