@@ -24,6 +24,7 @@ interface UserSettings {
   showTileGrid: boolean;
   showCoordinates: boolean;
   autoOpenDownloadDir: boolean;
+  checkForUpdates: boolean;
   downloadZoomStrategy: "current" | "fixed";
   downloadFixedZoom: number;
   maxConcurrentTasks: number;
@@ -586,6 +587,17 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     className="w-4 h-4 rounded border-border accent-primary"
                   />
                   <span className="text-sm">Auto-open Downloads Folder</span>
+                </label>
+
+                {/* Check for updates */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.checkForUpdates !== false}
+                    onChange={(e) => setSettings({ ...settings, checkForUpdates: e.target.checked })}
+                    className="w-4 h-4 rounded border-border accent-primary"
+                  />
+                  <span className="text-sm">Check for updates on startup</span>
                 </label>
 
                 {/* Other display options */}

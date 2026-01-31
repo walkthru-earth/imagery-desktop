@@ -60,6 +60,7 @@ type UserSettings struct {
 	ShowTileGrid        bool   `json:"showTileGrid"`
 	ShowCoordinates     bool   `json:"showCoordinates"`
 	AutoOpenDownloadDir bool   `json:"autoOpenDownloadDir"`
+	CheckForUpdates     bool   `json:"checkForUpdates"` // Check for updates on startup
 
 	// Task queue settings
 	MaxConcurrentTasks int  `json:"maxConcurrentTasks"` // 1-5, default 1
@@ -111,6 +112,7 @@ func DefaultSettings() *UserSettings {
 		ShowTileGrid:        false,
 		ShowCoordinates:     false,
 		AutoOpenDownloadDir: true,
+		CheckForUpdates:     true, // Check for updates on startup by default
 		MaxConcurrentTasks:  1,
 		TaskPanelOpen:       false,
 		LastCenterLat:       30.0621, // Zamalek, Cairo (same as DefaultCenterLat)

@@ -27,6 +27,7 @@ import { CoordinatesOverlay } from "@/components/Map/CoordinatesOverlay";
 import { MapCropOverlay } from "@/components/Map/MapCropOverlay";
 import { TaskPanel } from "@/components/TaskPanel";
 import { ReExportDialog } from "@/components/ReExportDialog";
+import { UpdateNotice } from "@/components/UpdateNotice";
 import { useTheme } from "@/components/ThemeProvider";
 
 // API & Types
@@ -93,6 +94,9 @@ function App() {
   // Settings state
   const [settings, setSettings] = useState<any>(null);
 
+  // App version for update check
+  const [appVersion, setAppVersion] = useState<string>("");
+
   const loadSettings = async () => {
     try {
       if ((window as any).go?.main?.App?.GetSettings) {
@@ -126,6 +130,11 @@ function App() {
   useEffect(() => {
     // Load settings
     loadSettings();
+
+    // Fetch app version for update check
+    if ((window as any).go?.main?.App?.GetAppVersion) {
+      (window as any).go.main.App.GetAppVersion().then(setAppVersion);
+    }
 
     // RTL Plugin
     if (maplibregl.getRTLTextPluginStatus() === "unavailable") {
@@ -674,6 +683,11 @@ function App() {
           }}
           onSuccess={() => setTaskPanelRefreshTrigger(prev => prev + 1)}
         />
+
+        {/* Update Notice */}
+        {appVersion && settings?.checkForUpdates !== false && (
+          <UpdateNotice currentVersion={appVersion} />
+        )}
       </div>
     </MainLayout>
   );
