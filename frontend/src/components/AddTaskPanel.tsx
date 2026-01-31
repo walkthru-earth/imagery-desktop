@@ -1,14 +1,19 @@
 import * as React from "react";
 import { useState, useEffect, useCallback } from "react";
-import {
-  X,
-  Film,
-  Settings2,
-  ListPlus,
-  ChevronLeft,
-} from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Film, Settings2, ListPlus, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/services/api";
 import type { BoundingBox, GEDateInfo, CropPreview } from "@/types";
 import { main } from "@/../wailsjs/go/models";
@@ -20,20 +25,13 @@ export interface AddTaskPanelProps {
   bbox: BoundingBox | null;
   zoom: number;
   source: "esri" | "google";
-
-  // Single date task
   singleDate?: string;
   singleHexDate?: string;
   singleEpoch?: number;
-
-  // Date range task
   dateRange?: Array<{ date: string; hexDate?: string; epoch?: number }>;
-
-  // Crop overlay callback
   onCropChange?: (crop: CropPreview | null) => void;
 }
 
-// Video presets with dimensions
 const VIDEO_PRESETS = [
   { id: "youtube", label: "YouTube (1920×1080)", width: 1920, height: 1080 },
   { id: "instagram_square", label: "Instagram Square (1080×1080)", width: 1080, height: 1080 },
@@ -70,53 +68,40 @@ export function AddTaskPanel({
   const [format, setFormat] = useState<"tiles" | "geotiff" | "both">("geotiff");
   const [includeVideo, setIncludeVideo] = useState(false);
   const [videoFormat, setVideoFormat] = useState<"mp4" | "gif">("mp4");
-
-  // Video settings
   const [videoPreset, setVideoPreset] = useState("youtube");
   const [frameDelay, setFrameDelay] = useState(0.5);
   const [showDateOverlay, setShowDateOverlay] = useState(true);
   const [datePosition, setDatePosition] = useState("bottom-right");
   const [videoQuality, setVideoQuality] = useState(90);
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Crop position (0-1, where 0.5 is center)
   const [cropX, setCropX] = useState(0.5);
   const [cropY, setCropY] = useState(0.5);
-
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [exportZoom, setExportZoom] = useState(zoom);
 
-  // Get current preset dimensions
   const currentPreset = VIDEO_PRESETS.find(p => p.id === videoPreset) || VIDEO_PRESETS[0];
 
-  // Calculate crop preview based on preset aspect ratio
   const calculateCropPreview = useCallback((): CropPreview => {
     const aspectRatio = currentPreset.width / currentPreset.height;
-
-    // Assume container aspect ratio is 16:9 (typical map view)
     const containerAspectRatio = 16 / 9;
 
     let cropWidth: number;
     let cropHeight: number;
 
     if (aspectRatio > containerAspectRatio) {
-      // Preset is wider - fit to width
       cropWidth = 0.8;
       cropHeight = cropWidth / aspectRatio * containerAspectRatio;
     } else {
-      // Preset is taller - fit to height
       cropHeight = 0.8;
       cropWidth = cropHeight * aspectRatio / containerAspectRatio;
     }
 
-    // Center the crop based on cropX, cropY (where 0.5 = center)
     const x = cropX * (1 - cropWidth);
     const y = cropY * (1 - cropHeight);
 
     return { x, y, width: cropWidth, height: cropHeight };
   }, [currentPreset, cropX, cropY]);
 
-  // Update crop overlay when video settings change
   useEffect(() => {
     if (isOpen && includeVideo && onCropChange) {
       onCropChange(calculateCropPreview());
@@ -125,7 +110,6 @@ export function AddTaskPanel({
     }
   }, [isOpen, includeVideo, calculateCropPreview, onCropChange]);
 
-  // Initialize zoom based on settings
   useEffect(() => {
     if (isOpen) {
       if ((window as any).go?.main?.App?.GetSettings) {
@@ -135,15 +119,11 @@ export function AddTaskPanel({
           } else {
             setExportZoom(zoom);
           }
-        }).catch((err: any) => {
-          console.error("Failed to load settings:", err);
-          setExportZoom(zoom);
-        });
+        }).catch(() => setExportZoom(zoom));
       }
     }
   }, [isOpen, zoom]);
 
-  // Clear crop overlay on close
   useEffect(() => {
     if (!isOpen && onCropChange) {
       onCropChange(null);
@@ -152,11 +132,9 @@ export function AddTaskPanel({
 
   const handleAddToQueue = async () => {
     if (!bbox) return;
-
     setIsSubmitting(true);
 
     try {
-      // Build dates array
       let dates: GEDateInfo[];
       if (isRangeMode && dateRange) {
         dates = dateRange.map(d => ({
@@ -172,48 +150,45 @@ export function AddTaskPanel({
         }];
       }
 
-      // Build task name
       const taskName = isRangeMode
         ? `${source === "esri" ? "Esri" : "Google Earth"} ${dates.length} dates (Z${exportZoom})`
         : `${source === "esri" ? "Esri" : "Google Earth"} ${singleDate} (Z${exportZoom})`;
 
-      // Build video options if needed
       let videoOpts: main.VideoExportOptions | undefined;
       if (includeVideo && isRangeMode && format !== "tiles") {
         videoOpts = new main.VideoExportOptions({
           width: currentPreset.width,
           height: currentPreset.height,
           preset: videoPreset,
-          cropX: cropX,
-          cropY: cropY,
+          cropX,
+          cropY,
           spotlightEnabled: false,
           spotlightCenterLat: 0,
           spotlightCenterLon: 0,
           spotlightRadiusKm: 1.0,
           overlayOpacity: 0.6,
-          showDateOverlay: showDateOverlay,
+          showDateOverlay,
           dateFontSize: 48,
-          datePosition: datePosition,
-          frameDelay: frameDelay,
+          datePosition,
+          frameDelay,
           outputFormat: videoFormat,
           quality: videoQuality,
         });
       }
 
-      // Create task
       const task = new main.TaskQueueExportTask({
-        id: "", // Will be assigned by backend
+        id: "",
         name: taskName,
         status: "pending",
         priority: 0,
         createdAt: new Date().toISOString(),
         source: source === "esri" ? "esri" : "google",
-        bbox: bbox,
+        bbox,
         zoom: exportZoom,
-        format: format,
-        dates: dates,
+        format,
+        dates,
         videoExport: includeVideo && isRangeMode && format !== "tiles",
-        videoOpts: videoOpts,
+        videoOpts,
         progress: {
           currentPhase: "",
           totalDates: dates.length,
@@ -225,11 +200,8 @@ export function AddTaskPanel({
       });
 
       await api.addExportTask(task);
-
-      // Close panel - task is now in queue
       onClose();
 
-      // Auto-start queue if not running
       const status = await api.getTaskQueueStatus();
       if (!status.isRunning) {
         await api.startTaskQueue();
@@ -267,260 +239,231 @@ export function AddTaskPanel({
       </div>
 
       {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* Format Selection */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Export Format</label>
-          <div className="flex gap-2">
-            <Button
-              variant={format === "tiles" ? "default" : "outline"}
-              onClick={() => setFormat("tiles")}
-              disabled={isSubmitting}
-              size="sm"
-              className="flex-1"
-            >
-              Tiles
-            </Button>
-            <Button
-              variant={format === "geotiff" ? "default" : "outline"}
-              onClick={() => setFormat("geotiff")}
-              disabled={isSubmitting}
-              size="sm"
-              className="flex-1"
-            >
-              GeoTIFF
-            </Button>
-            <Button
-              variant={format === "both" ? "default" : "outline"}
-              onClick={() => setFormat("both")}
-              disabled={isSubmitting}
-              size="sm"
-              className="flex-1"
-            >
-              Both
-            </Button>
-          </div>
-        </div>
-
-        {/* Zoom Level Selection */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center">
-            <label className="text-sm font-medium">Export Zoom Level</label>
-            <span className="text-sm font-mono bg-muted px-2 py-0.5 rounded">{exportZoom}</span>
-          </div>
-          <input
-            type="range"
-            min="1"
-            max="20"
-            step="1"
-            value={exportZoom}
-            onChange={(e) => setExportZoom(parseInt(e.target.value))}
-            disabled={isSubmitting}
-            className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
-          />
-          <p className="text-xs text-muted-foreground">
-            Map: {zoom} | Export: {exportZoom}
-          </p>
-        </div>
-
-        {/* Video Export Options (Range Mode Only) */}
-        {isRangeMode && (
-          <div className="space-y-3 border-t pt-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={includeVideo}
-                onChange={(e) => setIncludeVideo(e.target.checked)}
-                disabled={isSubmitting}
-                className="w-4 h-4 rounded border-border accent-primary"
-              />
-              <Film className="h-4 w-4" />
-              <span className="text-sm font-medium">Create Timelapse Video</span>
-            </label>
-
-            {includeVideo && (
-              <div className="space-y-3 ml-6 p-3 bg-muted/50 rounded-lg">
-                {/* Video Format */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium">Video Format</label>
-                  <div className="flex gap-2">
-                    <Button
-                      variant={videoFormat === "mp4" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setVideoFormat("mp4")}
-                      disabled={isSubmitting}
-                      className="flex-1 h-8 text-xs"
-                    >
-                      MP4
-                    </Button>
-                    <Button
-                      variant={videoFormat === "gif" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setVideoFormat("gif")}
-                      disabled={isSubmitting}
-                      className="flex-1 h-8 text-xs"
-                    >
-                      GIF
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Video Preset */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium">Dimensions</label>
-                  <select
-                    value={videoPreset}
-                    onChange={(e) => setVideoPreset(e.target.value)}
-                    disabled={isSubmitting}
-                    className="w-full h-8 px-2 rounded-md border border-input bg-background text-xs"
-                  >
-                    {VIDEO_PRESETS.map(preset => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    Pan the map to position your export area
-                  </p>
-                </div>
-
-                {/* Frame Delay */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-medium">Frame Duration</label>
-                    <span className="text-xs font-mono bg-background px-1.5 py-0.5 rounded">
-                      {frameDelay.toFixed(1)}s
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="3"
-                    step="0.1"
-                    value={frameDelay}
-                    onChange={(e) => setFrameDelay(parseFloat(e.target.value))}
-                    disabled={isSubmitting}
-                    className="w-full h-1.5 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
-                  />
-                </div>
-
-                {/* Date Overlay Toggle */}
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showDateOverlay}
-                      onChange={(e) => setShowDateOverlay(e.target.checked)}
-                      disabled={isSubmitting}
-                      className="w-3.5 h-3.5 rounded border-border accent-primary"
-                    />
-                    <span className="text-xs">Date Overlay</span>
-                  </label>
-                  {showDateOverlay && (
-                    <select
-                      value={datePosition}
-                      onChange={(e) => setDatePosition(e.target.value)}
-                      disabled={isSubmitting}
-                      className="h-7 px-1.5 rounded-md border border-input bg-background text-xs"
-                    >
-                      {DATE_POSITIONS.map(pos => (
-                        <option key={pos.id} value={pos.id}>
-                          {pos.label}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Advanced Settings Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      <ScrollArea className="flex-1">
+        <div className="p-4 space-y-5">
+          {/* Format Selection */}
+          <div className="space-y-2">
+            <Label>Export Format</Label>
+            <div className="flex gap-2">
+              {(["tiles", "geotiff", "both"] as const).map((f) => (
+                <Button
+                  key={f}
+                  variant={format === f ? "default" : "outline"}
+                  onClick={() => setFormat(f)}
+                  disabled={isSubmitting}
+                  size="sm"
+                  className="flex-1 capitalize"
                 >
-                  <Settings2 className="h-3 w-3" />
-                  {showAdvanced ? "Hide" : "Show"} Advanced
-                </button>
+                  {f === "geotiff" ? "GeoTIFF" : f === "both" ? "Both" : "Tiles"}
+                </Button>
+              ))}
+            </div>
+          </div>
 
-                {showAdvanced && (
-                  <div className="space-y-3 pt-2 border-t border-border/50">
-                    {/* Quality Slider */}
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
-                        <label className="text-xs font-medium">Quality</label>
-                        <span className="text-xs font-mono bg-background px-1.5 py-0.5 rounded">
-                          {videoQuality}%
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="50"
-                        max="100"
-                        step="5"
-                        value={videoQuality}
-                        onChange={(e) => setVideoQuality(parseInt(e.target.value))}
-                        disabled={isSubmitting}
-                        className="w-full h-1.5 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
-                      />
-                    </div>
+          {/* Zoom Level Selection */}
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <Label>Export Zoom Level</Label>
+              <span className="text-sm font-mono bg-muted px-2 py-0.5 rounded">{exportZoom}</span>
+            </div>
+            <Slider
+              min={1}
+              max={20}
+              step={1}
+              value={[exportZoom]}
+              onValueChange={(v) => setExportZoom(v[0])}
+              disabled={isSubmitting}
+            />
+            <p className="text-xs text-muted-foreground">
+              Map: {zoom} | Export: {exportZoom}
+            </p>
+          </div>
 
-                    {/* Crop Position Controls */}
+          {/* Video Export Options */}
+          {isRangeMode && (
+            <>
+              <Separator />
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="include-video"
+                    checked={includeVideo}
+                    onCheckedChange={(checked) => setIncludeVideo(checked === true)}
+                    disabled={isSubmitting}
+                  />
+                  <Label htmlFor="include-video" className="flex items-center gap-2 cursor-pointer">
+                    <Film className="h-4 w-4" />
+                    Create Timelapse Video
+                  </Label>
+                </div>
+
+                {includeVideo && (
+                  <div className="space-y-4 ml-6 p-3 bg-muted/50 rounded-lg">
+                    {/* Video Format */}
                     <div className="space-y-2">
-                      <label className="text-xs font-medium">Crop Position</label>
-                      <div className="grid grid-cols-3 gap-1">
-                        {[
-                          { label: "↖", x: 0, y: 0 },
-                          { label: "↑", x: 0.5, y: 0 },
-                          { label: "↗", x: 1, y: 0 },
-                          { label: "←", x: 0, y: 0.5 },
-                          { label: "•", x: 0.5, y: 0.5 },
-                          { label: "→", x: 1, y: 0.5 },
-                          { label: "↙", x: 0, y: 1 },
-                          { label: "↓", x: 0.5, y: 1 },
-                          { label: "↘", x: 1, y: 1 },
-                        ].map(({ label, x, y }) => (
-                          <button
-                            key={label}
-                            type="button"
-                            onClick={() => {
-                              setCropX(x);
-                              setCropY(y);
-                            }}
+                      <Label className="text-xs">Video Format</Label>
+                      <div className="flex gap-2">
+                        {(["mp4", "gif"] as const).map((f) => (
+                          <Button
+                            key={f}
+                            variant={videoFormat === f ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setVideoFormat(f)}
                             disabled={isSubmitting}
-                            className={cn(
-                              "w-full h-8 text-xs rounded border transition-colors",
-                              cropX === x && cropY === y
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "bg-background border-border hover:bg-muted"
-                            )}
+                            className="flex-1 h-8 text-xs uppercase"
                           >
-                            {label}
-                          </button>
+                            {f}
+                          </Button>
                         ))}
                       </div>
                     </div>
+
+                    {/* Video Preset */}
+                    <div className="space-y-2">
+                      <Label className="text-xs">Dimensions</Label>
+                      <Select value={videoPreset} onValueChange={setVideoPreset} disabled={isSubmitting}>
+                        <SelectTrigger size="sm" className="w-full text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {VIDEO_PRESETS.map(preset => (
+                            <SelectItem key={preset.id} value={preset.id} className="text-xs">
+                              {preset.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Pan the map to position your export area
+                      </p>
+                    </div>
+
+                    {/* Frame Delay */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label className="text-xs">Frame Duration</Label>
+                        <span className="text-xs font-mono bg-background px-1.5 py-0.5 rounded">
+                          {frameDelay.toFixed(1)}s
+                        </span>
+                      </div>
+                      <Slider
+                        min={0.1}
+                        max={3}
+                        step={0.1}
+                        value={[frameDelay]}
+                        onValueChange={(v) => setFrameDelay(v[0])}
+                        disabled={isSubmitting}
+                        className="h-1.5"
+                      />
+                    </div>
+
+                    {/* Date Overlay */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="date-overlay"
+                          checked={showDateOverlay}
+                          onCheckedChange={(checked) => setShowDateOverlay(checked === true)}
+                          disabled={isSubmitting}
+                        />
+                        <Label htmlFor="date-overlay" className="text-xs cursor-pointer">
+                          Date Overlay
+                        </Label>
+                      </div>
+                      {showDateOverlay && (
+                        <Select value={datePosition} onValueChange={setDatePosition} disabled={isSubmitting}>
+                          <SelectTrigger size="sm" className="h-7 w-auto text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DATE_POSITIONS.map(pos => (
+                              <SelectItem key={pos.id} value={pos.id} className="text-xs">
+                                {pos.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+
+                    {/* Advanced Settings Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <Settings2 className="h-3 w-3" />
+                      {showAdvanced ? "Hide" : "Show"} Advanced
+                    </button>
+
+                    {showAdvanced && (
+                      <div className="space-y-4 pt-2 border-t border-border/50">
+                        {/* Quality */}
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <Label className="text-xs">Quality</Label>
+                            <span className="text-xs font-mono bg-background px-1.5 py-0.5 rounded">
+                              {videoQuality}%
+                            </span>
+                          </div>
+                          <Slider
+                            min={50}
+                            max={100}
+                            step={5}
+                            value={[videoQuality]}
+                            onValueChange={(v) => setVideoQuality(v[0])}
+                            disabled={isSubmitting}
+                            className="h-1.5"
+                          />
+                        </div>
+
+                        {/* Crop Position */}
+                        <div className="space-y-2">
+                          <Label className="text-xs">Crop Position</Label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {[
+                              { label: "↖", x: 0, y: 0 },
+                              { label: "↑", x: 0.5, y: 0 },
+                              { label: "↗", x: 1, y: 0 },
+                              { label: "←", x: 0, y: 0.5 },
+                              { label: "•", x: 0.5, y: 0.5 },
+                              { label: "→", x: 1, y: 0.5 },
+                              { label: "↙", x: 0, y: 1 },
+                              { label: "↓", x: 0.5, y: 1 },
+                              { label: "↘", x: 1, y: 1 },
+                            ].map(({ label, x, y }) => (
+                              <Button
+                                key={label}
+                                variant={cropX === x && cropY === y ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => { setCropX(x); setCropY(y); }}
+                                disabled={isSubmitting}
+                                className="h-8 text-xs"
+                              >
+                                {label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
+
+                {!includeVideo && (
+                  <p className="text-xs text-muted-foreground ml-6">
+                    Create a timelapse video showing changes over time
+                  </p>
+                )}
               </div>
-            )}
+            </>
+          )}
+        </div>
+      </ScrollArea>
 
-            {!includeVideo && (
-              <p className="text-xs text-muted-foreground ml-6">
-                Create a timelapse video showing changes over time
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Footer - Fixed at bottom */}
+      {/* Footer */}
       <div className="p-4 border-t bg-card space-y-3">
-        <Button
-          onClick={handleAddToQueue}
-          className="w-full"
-          disabled={isSubmitting || !bbox}
-        >
+        <Button onClick={handleAddToQueue} className="w-full" disabled={isSubmitting || !bbox}>
           <ListPlus className="h-4 w-4 mr-2" />
           {isSubmitting ? "Adding..." : "Add to Queue"}
         </Button>
