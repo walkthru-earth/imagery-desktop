@@ -248,14 +248,6 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, refreshTrigger }: Ta
               {queueStatus?.isPaused ? "Resume Queue" : "Start Queue"}
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={loadTasks}
-            title="Refresh"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </Button>
       </div>
 
       {/* Task List */}
