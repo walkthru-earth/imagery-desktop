@@ -40,7 +40,7 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
   return (
     <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
       <CardContent className="p-2 space-y-1">
-        {/* Source Selector, Add Task, and Range Toggle */}
+        {/* Source Selector and Range Toggle */}
         <div className="flex gap-2 items-center">
           <SourceSelector
             value={mapState.source}
@@ -51,19 +51,6 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
             size="md"
             className="flex-1"
           />
-          {onAddTask && dates.length > 0 && (
-            <Button
-              size="default"
-              onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
-              title={isRangeMode ? "Add task for date range" : "Add task for current view"}
-              className="bg-orange-500 hover:bg-orange-600 text-white"
-            >
-              <ListPlus className="h-4 w-4 mr-1.5" />
-              <span className="text-sm">
-                {isRangeMode ? `Add ${Math.abs(rangeEnd - rangeStart) + 1}` : "Add to Queue"}
-              </span>
-            </Button>
-          )}
           <Button
             size="default"
             variant={isRangeMode ? "default" : "outline"}
@@ -80,6 +67,23 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
             <Calendar className="h-5 w-5" />
           </Button>
         </div>
+
+        {/* Add Task Button - Centered */}
+        {onAddTask && dates.length > 0 && (
+          <div className="flex justify-center">
+            <Button
+              size="default"
+              onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
+              title={isRangeMode ? "Add task for date range" : "Add task for current view"}
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+            >
+              <ListPlus className="h-4 w-4 mr-1.5" />
+              <span className="text-sm">
+                {isRangeMode ? `Add ${Math.abs(rangeEnd - rangeStart) + 1}` : "Add to Queue"}
+              </span>
+            </Button>
+          </div>
+        )}
 
         {/* Date Slider */}
         {dates.length > 0 && (
