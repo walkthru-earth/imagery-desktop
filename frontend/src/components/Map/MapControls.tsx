@@ -40,8 +40,8 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
   return (
     <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
       <CardContent className="p-2 space-y-1">
-        {/* Source Selector, Add Task (centered), and Range Toggle */}
-        <div className="flex gap-2 items-center justify-center">
+        {/* Source Selector (left), Add Task (center), Range Toggle (right) */}
+        <div className="flex items-center justify-between">
           <SourceSelector
             value={mapState.source}
             onChange={(source) => {
