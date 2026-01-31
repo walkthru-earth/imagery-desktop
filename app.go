@@ -520,6 +520,69 @@ func (a *App) findLayerForDate(date string) (*esri.Layer, error) {
 	return nil, fmt.Errorf("no layer found for date: %s", date)
 }
 
+// isBlankTile checks if a tile is blank/uniform (white, black, or single color)
+// This happens when imagery isn't available at the requested zoom level for older dates
+func isBlankTile(data []byte) bool {
+	if len(data) < 100 {
+		return true // Too small to be a real image
+	}
+
+	// Decode image to check pixel uniformity
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return false // Can't decode, assume it's valid
+	}
+
+	bounds := img.Bounds()
+	if bounds.Dx() < 10 || bounds.Dy() < 10 {
+		return true // Too small
+	}
+
+	// Sample pixels at various positions
+	samplePoints := []image.Point{
+		{bounds.Min.X + bounds.Dx()/4, bounds.Min.Y + bounds.Dy()/4},
+		{bounds.Min.X + bounds.Dx()/2, bounds.Min.Y + bounds.Dy()/2},
+		{bounds.Min.X + 3*bounds.Dx()/4, bounds.Min.Y + 3*bounds.Dy()/4},
+		{bounds.Min.X + bounds.Dx()/4, bounds.Min.Y + 3*bounds.Dy()/4},
+		{bounds.Min.X + 3*bounds.Dx()/4, bounds.Min.Y + bounds.Dy()/4},
+	}
+
+	// Get first sample as reference
+	refR, refG, refB, _ := img.At(samplePoints[0].X, samplePoints[0].Y).RGBA()
+
+	// Check if all samples are nearly identical (within tolerance)
+	tolerance := uint32(500) // Very small tolerance for "same" color
+	allSame := true
+	for _, pt := range samplePoints[1:] {
+		r, g, b, _ := img.At(pt.X, pt.Y).RGBA()
+		if absDiff(r, refR) > tolerance || absDiff(g, refG) > tolerance || absDiff(b, refB) > tolerance {
+			allSame = false
+			break
+		}
+	}
+
+	if allSame {
+		// Check if it's a known blank color (white or near-white)
+		// RGBA values are in 0-65535 range
+		if refR > 60000 && refG > 60000 && refB > 60000 {
+			return true // White/blank
+		}
+		if refR < 5000 && refG < 5000 && refB < 5000 {
+			return true // Black/blank
+		}
+	}
+
+	return false
+}
+
+// absDiff returns absolute difference between two uint32 values
+func absDiff(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
 // tileResult holds the result of a tile download
 type tileResult struct {
 	tile *esri.EsriTile
@@ -2855,6 +2918,7 @@ func (a *App) AddExportTask(taskData TaskQueueExportTask) (string, error) {
 			Width:              taskData.VideoOpts.Width,
 			Height:             taskData.VideoOpts.Height,
 			Preset:             taskData.VideoOpts.Preset,
+			Presets:            taskData.VideoOpts.Presets, // Multi-preset support
 			CropX:              taskData.VideoOpts.CropX,
 			CropY:              taskData.VideoOpts.CropY,
 			SpotlightEnabled:   taskData.VideoOpts.SpotlightEnabled,
@@ -3030,19 +3094,28 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 			}
 		case "esri":
 			// Deduplicate Esri downloads by checking center tile hash
+			// Also detect blank tiles (no coverage at this zoom level)
 			shouldDownload := true
 			if esriCenterTile != nil {
 				layer, layerErr := a.findLayerForDate(dateInfo.Date)
 				if layerErr == nil {
 					tileData, tileErr := a.esriClient.FetchTile(layer, esriCenterTile)
 					if tileErr == nil {
-						hashKey := fmt.Sprintf("%x", sha256.Sum256(tileData))
-						if firstDate, seen := esriSeenHashes[hashKey]; seen {
-							log.Printf("[TaskQueue] Esri date %s has same imagery as %s, skipping", dateInfo.Date, firstDate)
+						// Check if tile is blank (no coverage at this zoom level)
+						if isBlankTile(tileData) {
+							log.Printf("[TaskQueue] Esri date %s has no coverage at zoom %d, skipping", dateInfo.Date, task.Zoom)
 							skippedCount++
 							shouldDownload = false
 						} else {
-							esriSeenHashes[hashKey] = dateInfo.Date
+							// Check for duplicate imagery
+							hashKey := fmt.Sprintf("%x", sha256.Sum256(tileData))
+							if firstDate, seen := esriSeenHashes[hashKey]; seen {
+								log.Printf("[TaskQueue] Esri date %s has same imagery as %s, skipping", dateInfo.Date, firstDate)
+								skippedCount++
+								shouldDownload = false
+							} else {
+								esriSeenHashes[hashKey] = dateInfo.Date
+							}
 						}
 					}
 				}
