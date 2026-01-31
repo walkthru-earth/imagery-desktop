@@ -255,7 +255,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   if (!isOpen) return null;
   if (isLoading || !settings) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
         <Card className="w-full max-w-3xl mx-4">
           <CardContent className="p-12 text-center">
             <p className="text-muted-foreground">Loading settings...</p>
@@ -266,7 +266,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <Card className="w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col">
         <CardHeader className="flex flex-row items-center justify-between border-b shrink-0">
           <div>
