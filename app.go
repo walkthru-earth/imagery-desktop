@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"fmt"
 	"image"
-	"image/draw"
 	"image/png"
 	"log"
 	"math"
@@ -37,7 +36,6 @@ import (
 	"imagery-desktop/internal/imagery"
 	"imagery-desktop/internal/ratelimit"
 	"imagery-desktop/internal/taskqueue"
-	"imagery-desktop/internal/utils/naming"
 	"imagery-desktop/internal/video"
 
 	_ "golang.org/x/image/tiff" // Register TIFF decoder for GeoTIFF loading
@@ -195,6 +193,9 @@ type App struct {
 
 	// Rate limit handling
 	rateLimitHandler *ratelimit.Handler // Rate limit detection and retry
+
+	// Video export manager
+	videoManager *video.Manager // Handles timelapse video export
 }
 
 // NewApp creates a new App application struct
@@ -289,6 +290,41 @@ func NewApp() *App {
 
 	rateLimitHandler.SetOnRecovered(func(provider string) {
 		log.Printf("[RateLimit] %s rate limit cleared - downloads resumed", provider)
+	})
+
+	// Initialize video manager with callbacks
+	app.videoManager = video.NewManager(video.Config{
+		DownloadPath: settings.DownloadPath,
+		DateFontData: dateFontData,
+		ProgressCallback: func(current, total, percent int, status string) {
+			// Convert video progress to download progress format
+			app.emitDownloadProgress(DownloadProgress{
+				Downloaded: current,
+				Total:      total,
+				Percent:    percent,
+				Status:     status,
+			})
+		},
+		LogCallback: app.emitLog,
+		ImageLoader: app.loadGeoTIFFImage,
+		LogoLoader:  app.loadLogoImage,
+		SpotlightCalculator: func(bbox video.BoundingBox, zoom int, centerLat, centerLon, radiusKm float64, imageBounds image.Rectangle) video.SpotlightPixels {
+			// Convert video.BoundingBox to app.BoundingBox and call app method
+			appBBox := BoundingBox{
+				South: bbox.South,
+				West:  bbox.West,
+				North: bbox.North,
+				East:  bbox.East,
+			}
+			appSpotlight := app.calculateSpotlightPixels(appBBox, zoom, centerLat, centerLon, radiusKm, imageBounds)
+			// Convert app.SpotlightPixels to video.SpotlightPixels
+			return video.SpotlightPixels{
+				X:      appSpotlight.X,
+				Y:      appSpotlight.Y,
+				Width:  appSpotlight.Width,
+				Height: appSpotlight.Height,
+			}
+		},
 	})
 
 	return app
@@ -1217,265 +1253,60 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 
 // exportTimelapseVideoInternal is the internal implementation with option to skip opening folder
 func (a *App) exportTimelapseVideoInternal(bbox BoundingBox, zoom int, dates []GEDateInfo, source string, videoOpts VideoExportOptions, openFolder bool) error {
-	log.Printf("=== ExportTimelapseVideo CALLED ===")
-	log.Printf("Parameters: bbox=%+v, zoom=%d, source=%s, dateCount=%d", bbox, zoom, source, len(dates))
-	log.Printf("VideoOpts: %+v", videoOpts)
-
-	if len(dates) == 0 {
-		log.Printf("ERROR: No dates provided to ExportTimelapseVideo")
-		return fmt.Errorf("no dates provided")
+	// Convert app types to video package types
+	videoBBox := video.BoundingBox{
+		South: bbox.South,
+		West:  bbox.West,
+		North: bbox.North,
+		East:  bbox.East,
 	}
 
-	log.Printf("[VideoExport] Starting timelapse video export for %d dates", len(dates))
-	log.Printf("[VideoExport] Source: %s, Zoom: %d", source, zoom)
-	a.emitLog(fmt.Sprintf("Starting timelapse video export for %d dates", len(dates)))
-	a.emitLog(fmt.Sprintf("Source: %s, Zoom: %d", source, zoom))
-
-	// Get download directory
-	downloadDir := a.downloadPath
-	log.Printf("[VideoExport] Download directory: %s", downloadDir)
-	a.emitLog(fmt.Sprintf("Download directory: %s", downloadDir))
-
-	// Prepare video export options
-	var preset video.SocialMediaPreset
-	switch videoOpts.Preset {
-	case "instagram_square":
-		preset = video.PresetInstagramSquare
-	case "instagram_portrait":
-		preset = video.PresetInstagramPortrait
-	case "instagram_story":
-		preset = video.PresetInstagramStory
-	case "tiktok":
-		preset = video.PresetTikTok
-	case "youtube":
-		preset = video.PresetYouTube
-	case "youtube_shorts":
-		preset = video.PresetYouTubeShorts
-	case "twitter":
-		preset = video.PresetTwitter
-	case "facebook":
-		preset = video.PresetFacebook
-	default:
-		preset = video.PresetCustom
-	}
-
-	// Get dimensions from preset or custom
-	width, height := videoOpts.Width, videoOpts.Height
-	if preset != video.PresetCustom {
-		width, height = video.GetPresetDimensions(preset)
-	}
-
-	// Default crop position to center if not specified
-	cropX := videoOpts.CropX
-	cropY := videoOpts.CropY
-	if cropX == 0 && cropY == 0 {
-		cropX = 0.5
-		cropY = 0.5
-	}
-
-	opts := &video.ExportOptions{
-		Width:           width,
-		Height:          height,
-		Preset:          preset,
-		CropX:           cropX,
-		CropY:           cropY,
-		UseSpotlight:    videoOpts.SpotlightEnabled,
-		OverlayOpacity:  videoOpts.OverlayOpacity,
-		OverlayColor:    video.DefaultExportOptions().OverlayColor, // Use default black
-		ShowDateOverlay: videoOpts.ShowDateOverlay,
-		DateFontSize:    videoOpts.DateFontSize,
-		DatePosition:    videoOpts.DatePosition,
-		DateColor:       video.DefaultExportOptions().DateColor, // Use default white
-		DateShadow:      true,
-		DateFormat:      "Jan 02, 2006",
-		DateFontData:    dateFontData, // Use embedded Arial Unicode font
-		ShowLogo:        videoOpts.ShowLogo,
-		LogoPosition:    videoOpts.LogoPosition,
-		LogoScale:       0.6,
-		FrameRate:       30,
-		FrameDelay:      videoOpts.FrameDelay,
-		OutputFormat:    videoOpts.OutputFormat,
-		Quality:         videoOpts.Quality,
-		UseH264:         true, // Try to use H.264 if FFmpeg is available
-	}
-
-	// Load logo image if enabled
-	if videoOpts.ShowLogo {
-		logoImg, err := a.loadLogoImage()
-		if err != nil {
-			log.Printf("[VideoExport] Warning: Failed to load logo: %v", err)
-		} else {
-			opts.LogoImage = logoImg
-			log.Printf("[VideoExport] Logo image loaded")
+	videoDates := make([]video.DateInfo, len(dates))
+	for i, d := range dates {
+		videoDates[i] = video.DateInfo{
+			Date:    d.Date,
+			HexDate: d.HexDate,
+			Epoch:   d.Epoch,
 		}
 	}
 
-	// If spotlight is enabled, calculate pixel coordinates from geographic coordinates
-	if videoOpts.SpotlightEnabled {
-		// For now, we'll process the full image and let the video processor handle spotlight
-		// This requires loading the full GeoTIFF to get pixel dimensions first
-		a.emitLog("Spotlight mode enabled - will calculate coordinates from first frame")
+	videoTimelapseOpts := video.TimelapseOptions{
+		Width:              videoOpts.Width,
+		Height:             videoOpts.Height,
+		Preset:             videoOpts.Preset,
+		Presets:            videoOpts.Presets,
+		CropX:              videoOpts.CropX,
+		CropY:              videoOpts.CropY,
+		SpotlightEnabled:   videoOpts.SpotlightEnabled,
+		SpotlightCenterLat: videoOpts.SpotlightCenterLat,
+		SpotlightCenterLon: videoOpts.SpotlightCenterLon,
+		SpotlightRadiusKm:  videoOpts.SpotlightRadiusKm,
+		OverlayOpacity:     videoOpts.OverlayOpacity,
+		ShowDateOverlay:    videoOpts.ShowDateOverlay,
+		DateFontSize:       videoOpts.DateFontSize,
+		DatePosition:       videoOpts.DatePosition,
+		ShowLogo:           videoOpts.ShowLogo,
+		LogoPosition:       videoOpts.LogoPosition,
+		FrameDelay:         videoOpts.FrameDelay,
+		OutputFormat:       videoOpts.OutputFormat,
+		Quality:            videoOpts.Quality,
 	}
 
-	// Create video exporter
-	log.Printf("[VideoExport] Creating video exporter...")
-	exporter, err := video.NewExporter(opts)
-	if err != nil {
-		log.Printf("[VideoExport] ERROR: Failed to create video exporter: %v", err)
-		return fmt.Errorf("failed to create video exporter: %w", err)
-	}
-	defer exporter.Close()
-	log.Printf("[VideoExport] Video exporter created successfully")
-
-	// Load frames from GeoTIFFs
-	frames := make([]video.Frame, 0, len(dates))
-	log.Printf("[VideoExport] Starting frame loading loop for %d dates", len(dates))
-
-	for i, dateInfo := range dates {
-		log.Printf("[VideoExport] Processing date %d/%d: %s", i+1, len(dates), dateInfo.Date)
-		a.emitDownloadProgress(DownloadProgress{
-			Downloaded: i,
-			Total:      len(dates),
-			Percent:    (i * 100) / len(dates),
-			Status:     fmt.Sprintf("Loading frame %d/%d: %s", i+1, len(dates), dateInfo.Date),
-		})
-
-		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
-		// Convert source to match download naming convention
-		downloadSource := source
-		if source == common.ProviderGoogleEarth {
-			downloadSource = "ge_historical"
-		}
-		filename := naming.GenerateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox.South, bbox.West, bbox.North, bbox.East, zoom)
-		basePath := filepath.Join(downloadDir, filename)
-
-		// Try loading PNG first (created as sidecar for better compatibility)
-		imagePath := strings.TrimSuffix(basePath, ".tif") + ".png"
-		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-			// Fallback to GeoTIFF if PNG not found
-			imagePath = basePath
-		}
-
-		log.Printf("[VideoExport] Looking for frame: %s", imagePath)
-		a.emitLog(fmt.Sprintf("Looking for frame: %s", imagePath))
-
-		// Check if file exists
-		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-			log.Printf("[VideoExport] ❌ Frame not found for %s: %s", dateInfo.Date, imagePath)
-			a.emitLog(fmt.Sprintf("❌ Frame not found for %s: %s", dateInfo.Date, imagePath))
-			continue
-		}
-
-		log.Printf("[VideoExport] ✅ Found frame for %s", dateInfo.Date)
-		a.emitLog(fmt.Sprintf("✅ Found frame for %s", dateInfo.Date))
-
-		// Load image
-		log.Printf("[VideoExport] Attempting to load image from: %s", imagePath)
-		img, err := a.loadGeoTIFFImage(imagePath)
-		if err != nil {
-			log.Printf("[VideoExport] ❌ ERROR: Failed to load GeoTIFF for %s: %v", dateInfo.Date, err)
-			a.emitLog(fmt.Sprintf("Failed to load GeoTIFF for %s: %v", dateInfo.Date, err))
-			continue
-		}
-		log.Printf("[VideoExport] ✅ Successfully loaded image for %s", dateInfo.Date)
-
-		// Convert to RGBA if needed
-		var rgba *image.RGBA
-		if rgbaImg, ok := img.(*image.RGBA); ok {
-			rgba = rgbaImg
-		} else {
-			bounds := img.Bounds()
-			rgba = image.NewRGBA(bounds)
-			draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
-		}
-
-		// Calculate spotlight coordinates from geographic coordinates on first frame
-		if videoOpts.SpotlightEnabled && i == 0 {
-			// Calculate spotlight pixel coordinates based on geographic center and radius
-			spotlightPixels := a.calculateSpotlightPixels(
-				bbox, zoom,
-				videoOpts.SpotlightCenterLat, videoOpts.SpotlightCenterLon,
-				videoOpts.SpotlightRadiusKm,
-				rgba.Bounds(),
-			)
-			opts.SpotlightX = spotlightPixels.X
-			opts.SpotlightY = spotlightPixels.Y
-			opts.SpotlightWidth = spotlightPixels.Width
-			opts.SpotlightHeight = spotlightPixels.Height
-			a.emitLog(fmt.Sprintf("Spotlight area: x=%d y=%d w=%d h=%d",
-				spotlightPixels.X, spotlightPixels.Y, spotlightPixels.Width, spotlightPixels.Height))
-		}
-
-		// Parse date
-		parsedDate, err := time.Parse("2006-01-02", dateInfo.Date)
-		if err != nil {
-			a.emitLog(fmt.Sprintf("Failed to parse date %s: %v", dateInfo.Date, err))
-			parsedDate = time.Now()
-		}
-
-		frames = append(frames, video.Frame{
-			Image: rgba,
-			Date:  parsedDate,
-		})
-	}
-
-	log.Printf("[VideoExport] Total frames loaded: %d", len(frames))
-	a.emitLog(fmt.Sprintf("Total frames loaded: %d", len(frames)))
-
-	if len(frames) == 0 {
-		log.Printf("[VideoExport] ❌ ERROR: No frames loaded - ensure GeoTIFFs are downloaded first")
-		a.emitLog("❌ ERROR: No frames loaded - ensure GeoTIFFs are downloaded first")
-		return fmt.Errorf("no frames loaded - ensure GeoTIFFs are downloaded first")
-	}
-
-	log.Printf("[VideoExport] ✅ Loaded %d frames successfully, starting video encoding...", len(frames))
-	a.emitLog(fmt.Sprintf("✅ Loaded %d frames successfully, starting video encoding...", len(frames)))
-
-	// Generate output filename
-	outputFilename := fmt.Sprintf("%s_timelapse_%s_to_%s_%s.%s",
-		source,
-		dates[0].Date,
-		dates[len(dates)-1].Date,
-		videoOpts.Preset,
-		videoOpts.OutputFormat,
-	)
-	outputPath := filepath.Join(downloadDir, "timelapse_exports", outputFilename)
-
-	// Create output directory
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Export video
-	a.emitDownloadProgress(DownloadProgress{
-		Downloaded: len(frames),
-		Total:      len(frames),
-		Percent:    99,
-		Status:     "Encoding video...",
-	})
-
-	if err := exporter.ExportVideo(frames, outputPath); err != nil {
-		return fmt.Errorf("failed to export video: %w", err)
-	}
-
-	a.emitLog(fmt.Sprintf("Video exported successfully: %s", outputPath))
-
-	// Emit completion
-	a.emitDownloadProgress(DownloadProgress{
-		Downloaded: len(frames),
-		Total:      len(frames),
-		Percent:    100,
-		Status:     fmt.Sprintf("Video export complete: %s", filepath.Base(outputPath)),
-	})
-
-	// Auto-open download folder (only if requested, to avoid opening multiple times)
+	// Use videoManager to export
+	var err error
 	if openFolder {
-		if err := a.OpenDownloadFolder(); err != nil {
-			log.Printf("Failed to open download folder: %v", err)
+		err = a.videoManager.ExportTimelapse(videoBBox, zoom, videoDates, source, videoTimelapseOpts)
+		// Auto-open download folder after export
+		if err == nil {
+			if openErr := a.OpenDownloadFolder(); openErr != nil {
+				log.Printf("Failed to open download folder: %v", openErr)
+			}
 		}
+	} else {
+		err = a.videoManager.ExportTimelapseNoOpen(videoBBox, zoom, videoDates, source, videoTimelapseOpts)
 	}
 
-	return nil
+	return err
 }
 
 // ReExportVideo re-exports video from a completed task with new presets
@@ -1511,11 +1342,13 @@ func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string)
 		}
 	}
 
-	// Save original download path
+	// Save original download path and update videoManager
 	originalDownloadPath := a.downloadPath
 	a.downloadPath = task.OutputPath
+	a.videoManager.SetDownloadPath(task.OutputPath)
 	defer func() {
 		a.downloadPath = originalDownloadPath
+		a.videoManager.SetDownloadPath(originalDownloadPath)
 	}()
 
 	// Export for each preset
@@ -1896,6 +1729,13 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 	a.downloadPath = a.taskOutputPath
 	a.mu.Unlock()
 
+	// Update downloaders and videoManager to use task-specific path
+	a.esriDownloader.SetDownloadPath(a.taskOutputPath)
+	if a.geDownloader != nil {
+		a.geDownloader.SetDownloadPath(a.taskOutputPath)
+	}
+	a.videoManager.SetDownloadPath(a.taskOutputPath)
+
 	// Ensure we clean up task context when done
 	defer func() {
 		a.mu.Lock()
@@ -1906,6 +1746,13 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		task.OutputPath = a.taskOutputPath
 		a.taskOutputPath = ""
 		a.mu.Unlock()
+
+		// Restore downloaders and videoManager to original path
+		a.esriDownloader.SetDownloadPath(originalDownloadPath)
+		if a.geDownloader != nil {
+			a.geDownloader.SetDownloadPath(originalDownloadPath)
+		}
+		a.videoManager.SetDownloadPath(originalDownloadPath)
 	}()
 
 	// Convert types for internal use

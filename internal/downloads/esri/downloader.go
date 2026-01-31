@@ -96,6 +96,20 @@ func (d *Downloader) GetRangeDownloadState() (inRange bool, currentIndex, totalD
 	return d.inRangeDownload, d.currentDateIndex, d.totalDatesInRange
 }
 
+// SetDownloadPath updates the download path (thread-safe)
+func (d *Downloader) SetDownloadPath(path string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.downloadPath = path
+}
+
+// GetDownloadPath returns the current download path (thread-safe)
+func (d *Downloader) GetDownloadPath() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.downloadPath
+}
+
 // emitLog emits a log message if callback is set
 func (d *Downloader) emitLog(message string) {
 	if d.logCallback != nil {

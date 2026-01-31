@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"sync"
 
 	"golang.org/x/sync/semaphore"
 
@@ -32,6 +33,7 @@ type Downloader struct {
 	// Concurrency control
 	semaphore    *semaphore.Weighted
 	maxWorkers   int64
+	mu           sync.Mutex
 
 	// Tile server for historical tile fetching with epoch fallback
 	tileServer TileServerInterface
@@ -104,6 +106,20 @@ func (d *Downloader) trackEvent(event string, properties map[string]interface{})
 	if d.trackEventCallback != nil {
 		d.trackEventCallback(event, properties)
 	}
+}
+
+// SetDownloadPath updates the download path (thread-safe)
+func (d *Downloader) SetDownloadPath(path string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.downloadPath = path
+}
+
+// GetDownloadPath returns the current download path (thread-safe)
+func (d *Downloader) GetDownloadPath() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.downloadPath
 }
 
 // TileBounds represents the bounds of a tile grid
