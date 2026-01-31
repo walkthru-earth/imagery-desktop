@@ -188,6 +188,8 @@ func (m *Manager) exportTimelapseInternal(bbox BoundingBox, zoom int, dates []Da
 		preset = PresetInstagramPortrait
 	case "instagram_story":
 		preset = PresetInstagramStory
+	case "instagram_reel":
+		preset = PresetInstagramReel
 	case "tiktok":
 		preset = PresetTikTok
 	case "youtube":
