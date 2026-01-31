@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"fmt"
 	"image"
@@ -42,6 +43,9 @@ import (
 
 //go:embed frontend/src/assets/images/icon.png
 var logoImageData []byte
+
+//go:embed assets/fonts/ArialUnicode.ttf
+var dateFontData []byte
 
 // Linker flags
 var (
@@ -1371,6 +1375,7 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 
 // fetchHistoricalGETileWithZoomFallback attempts to fetch a historical tile with automatic zoom fallback
 // If the tile doesn't exist at the requested zoom, it tries lower zoom levels (z-1, z-2, etc.)
+// When using a lower zoom tile, it extracts and upscales the correct portion to match the original tile
 // Returns the tile data and the zoom level that succeeded, or error if all attempts fail
 func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, hexDate string, maxFallbackLevels int) ([]byte, int, error) {
 	// Try the requested zoom first
@@ -1381,6 +1386,10 @@ func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, hexD
 
 	// Log the initial failure
 	log.Printf("[ZoomFallback] Tile %s at zoom %d failed, trying fallback...", tile.Path, tile.Level)
+
+	originalRow := tile.Row
+	originalCol := tile.Column
+	originalZoom := tile.Level
 
 	// Try lower zoom levels
 	for fallbackLevel := 1; fallbackLevel <= maxFallbackLevels; fallbackLevel++ {
@@ -1400,12 +1409,98 @@ func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, hexD
 		log.Printf("[ZoomFallback] Trying zoom %d (tile: %s)...", lowerZoom, lowerTile.Path)
 		data, err := a.fetchHistoricalGETile(lowerTile, hexDate)
 		if err == nil {
-			log.Printf("[ZoomFallback] SUCCESS at zoom %d", lowerZoom)
-			return data, lowerZoom, nil
+			log.Printf("[ZoomFallback] SUCCESS at zoom %d, extracting quadrant for original tile", lowerZoom)
+
+			// Extract and upscale the correct portion of the lower zoom tile
+			// to match the original requested tile
+			croppedData, err := a.extractQuadrantFromFallbackTile(data, originalRow, originalCol, originalZoom, lowerTile.Row, lowerTile.Column, lowerZoom)
+			if err != nil {
+				log.Printf("[ZoomFallback] Failed to extract quadrant: %v, returning full tile", err)
+				return data, lowerZoom, nil
+			}
+
+			return croppedData, originalZoom, nil // Return originalZoom since we've upscaled to match
 		}
 	}
 
 	return nil, 0, fmt.Errorf("tile not available at zoom %d or any fallback levels", tile.Level)
+}
+
+// extractQuadrantFromFallbackTile extracts and upscales the portion of a lower-zoom tile
+// that corresponds to a higher-zoom tile position
+func (a *App) extractQuadrantFromFallbackTile(data []byte, origRow, origCol, origZoom, fallbackRow, fallbackCol, fallbackZoom int) ([]byte, error) {
+	// Decode the source image
+	srcImg, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		// Try other formats
+		srcImg, _, err = image.Decode(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode fallback tile: %w", err)
+		}
+	}
+
+	srcBounds := srcImg.Bounds()
+	srcWidth := srcBounds.Dx()
+	srcHeight := srcBounds.Dy()
+
+	// Calculate the scale factor (how many higher-zoom tiles fit in one lower-zoom tile)
+	zoomDiff := origZoom - fallbackZoom
+	scale := 1 << zoomDiff // 2^zoomDiff (e.g., 2 for 1 level diff, 4 for 2 levels diff)
+
+	// Calculate the position of the original tile within the fallback tile
+	// The original tile's position relative to the fallback tile
+	relRow := origRow - (fallbackRow * scale)
+	relCol := origCol - (fallbackCol * scale)
+
+	// Calculate the source rectangle to extract
+	quadrantWidth := srcWidth / scale
+	quadrantHeight := srcHeight / scale
+	srcX := relCol * quadrantWidth
+	srcY := relRow * quadrantHeight
+
+	log.Printf("[ZoomFallback] Extracting quadrant: zoomDiff=%d, scale=%d, rel(%d,%d), src(%d,%d), size(%d,%d)",
+		zoomDiff, scale, relCol, relRow, srcX, srcY, quadrantWidth, quadrantHeight)
+
+	// Create output image (256x256 like a normal tile)
+	tileSize := 256
+	dstImg := image.NewRGBA(image.Rect(0, 0, tileSize, tileSize))
+
+	// Scale factor for upsampling
+	scaleX := float64(tileSize) / float64(quadrantWidth)
+	scaleY := float64(tileSize) / float64(quadrantHeight)
+
+	// Nearest-neighbor upscaling (fast and works well for satellite imagery)
+	for dstY := 0; dstY < tileSize; dstY++ {
+		for dstX := 0; dstX < tileSize; dstX++ {
+			// Map destination coordinates to source coordinates
+			srcPosX := srcX + int(float64(dstX)/scaleX)
+			srcPosY := srcY + int(float64(dstY)/scaleY)
+
+			// Clamp to valid range
+			if srcPosX >= srcBounds.Max.X {
+				srcPosX = srcBounds.Max.X - 1
+			}
+			if srcPosY >= srcBounds.Max.Y {
+				srcPosY = srcBounds.Max.Y - 1
+			}
+			if srcPosX < srcBounds.Min.X {
+				srcPosX = srcBounds.Min.X
+			}
+			if srcPosY < srcBounds.Min.Y {
+				srcPosY = srcBounds.Min.Y
+			}
+
+			dstImg.Set(dstX, dstY, srcImg.At(srcPosX, srcPosY))
+		}
+	}
+
+	// Encode back to JPEG
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dstImg, &jpeg.Options{Quality: 90}); err != nil {
+		return nil, fmt.Errorf("failed to encode extracted quadrant: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }
 
 // fetchHistoricalGETile fetches a historical tile for the given GE tile coordinates and hexDate
@@ -2150,9 +2245,10 @@ type GEDateInfo struct {
 // VideoExportOptions contains options for timelapse video export
 type VideoExportOptions struct {
 	// Dimensions
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
-	Preset string `json:"preset"` // "instagram_square", "tiktok", "youtube", etc.
+	Width   int      `json:"width"`
+	Height  int      `json:"height"`
+	Preset  string   `json:"preset"`            // "instagram_square", "tiktok", "youtube", etc.
+	Presets []string `json:"presets,omitempty"` // Multiple presets for batch export
 
 	// Crop position (0.0-1.0, where 0.5 is center)
 	CropX float64 `json:"cropX"` // 0=left, 0.5=center, 1=right
@@ -2274,11 +2370,6 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		width, height = video.GetPresetDimensions(preset)
 	}
 
-	// Font path - we'll use an embedded or system font
-	// For now, make font optional - video export will work without date overlay if font is not found
-	fontPath := ""
-	// TODO: Embed Quicksand font or convert WOFF2 to TTF for date overlay
-
 	// Default crop position to center if not specified
 	cropX := videoOpts.CropX
 	cropY := videoOpts.CropY
@@ -2302,10 +2393,10 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		DateColor:       video.DefaultExportOptions().DateColor, // Use default white
 		DateShadow:      true,
 		DateFormat:      "Jan 02, 2006",
-		DateFontPath:    fontPath,
+		DateFontData:    dateFontData, // Use embedded Arial Unicode font
 		ShowLogo:        videoOpts.ShowLogo,
 		LogoPosition:    videoOpts.LogoPosition,
-		LogoScale:       1.0,
+		LogoScale:       0.6,
 		FrameRate:       30,
 		FrameDelay:      videoOpts.FrameDelay,
 		OutputFormat:    videoOpts.OutputFormat,
@@ -2487,6 +2578,98 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		log.Printf("Failed to open download folder: %v", err)
 	}
 
+	return nil
+}
+
+// ReExportVideo re-exports video from a completed task with new presets
+func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string) error {
+	log.Printf("[ReExport] Starting re-export for task %s with presets: %v", taskID, presets)
+
+	// Get the task from the queue
+	task, err := a.taskQueue.GetTask(taskID)
+	if err != nil {
+		return fmt.Errorf("failed to get task: %w", err)
+	}
+
+	if task.Status != "completed" {
+		return fmt.Errorf("task is not completed (status: %s)", task.Status)
+	}
+
+	if task.OutputPath == "" {
+		return fmt.Errorf("task has no output path")
+	}
+
+	if task.VideoOpts == nil {
+		return fmt.Errorf("task has no video options")
+	}
+
+	// Convert types for internal use
+	bbox := BoundingBox(task.BBox)
+	dates := make([]GEDateInfo, len(task.Dates))
+	for i, d := range task.Dates {
+		dates[i] = GEDateInfo{
+			Date:    d.Date,
+			HexDate: d.HexDate,
+			Epoch:   d.Epoch,
+		}
+	}
+
+	// Save original download path
+	originalDownloadPath := a.downloadPath
+	a.downloadPath = task.OutputPath
+	defer func() {
+		a.downloadPath = originalDownloadPath
+	}()
+
+	// Export for each preset
+	for i, presetID := range presets {
+		log.Printf("[ReExport] Exporting preset %d/%d: %s", i+1, len(presets), presetID)
+
+		a.emitDownloadProgress(DownloadProgress{
+			Downloaded:  i,
+			Total:       len(presets),
+			Percent:     (i * 100) / len(presets),
+			Status:      fmt.Sprintf("Exporting %s (%d/%d)", presetID, i+1, len(presets)),
+			CurrentDate: i + 1,
+			TotalDates:  len(presets),
+		})
+
+		// Create video options for this preset
+		videoOpts := VideoExportOptions{
+			Preset:             presetID,
+			CropX:              task.VideoOpts.CropX,
+			CropY:              task.VideoOpts.CropY,
+			SpotlightEnabled:   task.VideoOpts.SpotlightEnabled,
+			SpotlightCenterLat: task.VideoOpts.SpotlightCenterLat,
+			SpotlightCenterLon: task.VideoOpts.SpotlightCenterLon,
+			SpotlightRadiusKm:  task.VideoOpts.SpotlightRadiusKm,
+			OverlayOpacity:     task.VideoOpts.OverlayOpacity,
+			ShowDateOverlay:    task.VideoOpts.ShowDateOverlay,
+			DateFontSize:       task.VideoOpts.DateFontSize,
+			DatePosition:       task.VideoOpts.DatePosition,
+			ShowLogo:           task.VideoOpts.ShowLogo,
+			LogoPosition:       task.VideoOpts.LogoPosition,
+			FrameDelay:         task.VideoOpts.FrameDelay,
+			OutputFormat:       videoFormat,
+			Quality:            task.VideoOpts.Quality,
+		}
+
+		if err := a.ExportTimelapseVideo(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
+			log.Printf("[ReExport] Failed to export preset %s: %v", presetID, err)
+			// Continue with other presets
+		}
+	}
+
+	a.emitDownloadProgress(DownloadProgress{
+		Downloaded:  len(presets),
+		Total:       len(presets),
+		Percent:     100,
+		Status:      fmt.Sprintf("Re-export complete (%d videos)", len(presets)),
+		CurrentDate: len(presets),
+		TotalDates:  len(presets),
+	})
+
+	log.Printf("[ReExport] Completed re-export for task %s", taskID)
 	return nil
 }
 
@@ -2812,8 +2995,21 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		a.inRangeDownload = false
 	}()
 
+	// For Esri: deduplicate by checking center tile hash
+	var esriSeenHashes map[string]string
+	var esriCenterTile *esri.EsriTile
+	if task.Source == "esri" {
+		esriSeenHashes = make(map[string]string)
+		centerLat := (bbox.South + bbox.North) / 2
+		centerLon := (bbox.West + bbox.East) / 2
+		esriCenterTile, _ = esri.GetTileForWgs84(centerLat, centerLon, task.Zoom)
+	}
+
 	// Track progress
 	totalDates := len(dates)
+	downloadedCount := 0
+	skippedCount := 0
+
 	for i, dateInfo := range dates {
 		// Check for cancellation
 		select {
@@ -2829,8 +3025,35 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		switch task.Source {
 		case "google", "ge":
 			err = a.DownloadGoogleEarthHistoricalImagery(bbox, task.Zoom, dateInfo.HexDate, dateInfo.Epoch, dateInfo.Date, task.Format)
+			if err == nil {
+				downloadedCount++
+			}
 		case "esri":
-			err = a.DownloadEsriImagery(bbox, task.Zoom, dateInfo.Date, task.Format)
+			// Deduplicate Esri downloads by checking center tile hash
+			shouldDownload := true
+			if esriCenterTile != nil {
+				layer, layerErr := a.findLayerForDate(dateInfo.Date)
+				if layerErr == nil {
+					tileData, tileErr := a.esriClient.FetchTile(layer, esriCenterTile)
+					if tileErr == nil {
+						hashKey := fmt.Sprintf("%x", sha256.Sum256(tileData))
+						if firstDate, seen := esriSeenHashes[hashKey]; seen {
+							log.Printf("[TaskQueue] Esri date %s has same imagery as %s, skipping", dateInfo.Date, firstDate)
+							skippedCount++
+							shouldDownload = false
+						} else {
+							esriSeenHashes[hashKey] = dateInfo.Date
+						}
+					}
+				}
+			}
+
+			if shouldDownload {
+				err = a.DownloadEsriImagery(bbox, task.Zoom, dateInfo.Date, task.Format)
+				if err == nil {
+					downloadedCount++
+				}
+			}
 		default:
 			err = fmt.Errorf("unknown source: %s", task.Source)
 		}
@@ -2841,41 +3064,55 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		}
 	}
 
+	if skippedCount > 0 {
+		log.Printf("[TaskQueue] Downloaded %d unique dates, skipped %d duplicates", downloadedCount, skippedCount)
+	}
+
 	// If video export is requested, do it after all imagery is downloaded
 	if task.VideoExport && task.VideoOpts != nil {
-		a.emitDownloadProgress(DownloadProgress{
-			Downloaded:  0,
-			Total:       0,
-			Percent:     95,
-			Status:      "Encoding video...",
-			CurrentDate: totalDates,
-			TotalDates:  totalDates,
-		})
-
-		// Convert video options
-		videoOpts := VideoExportOptions{
-			Width:              task.VideoOpts.Width,
-			Height:             task.VideoOpts.Height,
-			Preset:             task.VideoOpts.Preset,
-			CropX:              task.VideoOpts.CropX,
-			CropY:              task.VideoOpts.CropY,
-			SpotlightEnabled:   task.VideoOpts.SpotlightEnabled,
-			SpotlightCenterLat: task.VideoOpts.SpotlightCenterLat,
-			SpotlightCenterLon: task.VideoOpts.SpotlightCenterLon,
-			SpotlightRadiusKm:  task.VideoOpts.SpotlightRadiusKm,
-			OverlayOpacity:     task.VideoOpts.OverlayOpacity,
-			ShowDateOverlay:    task.VideoOpts.ShowDateOverlay,
-			DateFontSize:       task.VideoOpts.DateFontSize,
-			DatePosition:       task.VideoOpts.DatePosition,
-			ShowLogo:           task.VideoOpts.ShowLogo,
-			LogoPosition:       task.VideoOpts.LogoPosition,
-			FrameDelay:         task.VideoOpts.FrameDelay,
-			OutputFormat:       task.VideoOpts.OutputFormat,
-			Quality:            task.VideoOpts.Quality,
+		// Determine which presets to export
+		presetsToExport := task.VideoOpts.Presets
+		if len(presetsToExport) == 0 {
+			// Fallback to single preset if no presets array provided
+			presetsToExport = []string{task.VideoOpts.Preset}
 		}
 
-		if err := a.ExportTimelapseVideo(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
-			return fmt.Errorf("video export failed: %w", err)
+		log.Printf("[TaskQueue] Exporting %d video presets: %v", len(presetsToExport), presetsToExport)
+
+		for i, presetID := range presetsToExport {
+			a.emitDownloadProgress(DownloadProgress{
+				Downloaded:  i,
+				Total:       len(presetsToExport),
+				Percent:     95 + (i * 5 / len(presetsToExport)),
+				Status:      fmt.Sprintf("Encoding video %d/%d (%s)...", i+1, len(presetsToExport), presetID),
+				CurrentDate: totalDates,
+				TotalDates:  totalDates,
+			})
+
+			// Convert video options for this preset
+			videoOpts := VideoExportOptions{
+				Preset:             presetID,
+				CropX:              task.VideoOpts.CropX,
+				CropY:              task.VideoOpts.CropY,
+				SpotlightEnabled:   task.VideoOpts.SpotlightEnabled,
+				SpotlightCenterLat: task.VideoOpts.SpotlightCenterLat,
+				SpotlightCenterLon: task.VideoOpts.SpotlightCenterLon,
+				SpotlightRadiusKm:  task.VideoOpts.SpotlightRadiusKm,
+				OverlayOpacity:     task.VideoOpts.OverlayOpacity,
+				ShowDateOverlay:    task.VideoOpts.ShowDateOverlay,
+				DateFontSize:       task.VideoOpts.DateFontSize,
+				DatePosition:       task.VideoOpts.DatePosition,
+				ShowLogo:           task.VideoOpts.ShowLogo,
+				LogoPosition:       task.VideoOpts.LogoPosition,
+				FrameDelay:         task.VideoOpts.FrameDelay,
+				OutputFormat:       task.VideoOpts.OutputFormat,
+				Quality:            task.VideoOpts.Quality,
+			}
+
+			if err := a.ExportTimelapseVideo(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
+				log.Printf("[TaskQueue] Failed to export preset %s: %v", presetID, err)
+				// Continue with other presets, don't fail the entire task
+			}
 		}
 	}
 

@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // Hooks
 import { useMapInstance } from "@/hooks/useMapInstance";
 import { useGoogleEarthDates } from "@/hooks/useGoogleEarthDates";
+import { useEsriDates } from "@/hooks/useEsriDates";
 import { useImageryLayer } from "@/hooks/useImageryLayer";
 
 // Context
@@ -25,11 +26,12 @@ import { TileGridOverlay } from "@/components/Map/TileGridOverlay";
 import { CoordinatesOverlay } from "@/components/Map/CoordinatesOverlay";
 import { MapCropOverlay } from "@/components/Map/MapCropOverlay";
 import { TaskPanel } from "@/components/TaskPanel";
+import { ReExportDialog } from "@/components/ReExportDialog";
 import { useTheme } from "@/components/ThemeProvider";
 
 // API & Types
 import { api, createBoundingBox } from "@/services/api";
-import type { CropPreview } from "@/types";
+import type { CropPreview, ExportTask } from "@/types";
 
 // RTL text plugin URL for Arabic support
 const RTL_PLUGIN_URL =
@@ -50,6 +52,10 @@ function App() {
   // Task panel state
   const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(true);
   const [taskPanelRefreshTrigger, setTaskPanelRefreshTrigger] = useState(0);
+
+  // Re-export dialog state
+  const [reExportTask, setReExportTask] = useState<ExportTask | null>(null);
+  const [isReExportDialogOpen, setIsReExportDialogOpen] = useState(false);
 
   // Effective theme (resolve "system" to actual light/dark)
   const effectiveTheme =
@@ -164,23 +170,65 @@ function App() {
   );
 
   // ===================
-  // Esri Dates (Shared)
+  // Esri Dates (Per Map - with local changes detection)
   // ===================
+  // Fetch initial global Esri layers for fallback (before map is ready)
   useEffect(() => {
-    console.log("[App] Fetching Esri dates on mount");
+    console.log("[App] Fetching initial Esri layers for fallback");
     api
       .getEsriLayers()
       .then((dates) => {
-        console.log("[App] Esri dates fetched:", dates?.length || 0);
-        if (dates && dates.length > 0) {
-          console.log("[App] Dispatching SET_ESRI_DATES");
+        // Only set if we don't have dates yet (will be replaced by viewport-specific dates)
+        if (dates && dates.length > 0 && state.esriDates.length === 0) {
+          console.log("[App] Setting initial Esri dates:", dates.length);
           dispatch({ type: "SET_ESRI_DATES", dates });
         }
       })
       .catch((error) => {
-        console.error("[App] Failed to fetch Esri dates:", error);
+        console.error("[App] Failed to fetch initial Esri dates:", error);
       });
-  }, [dispatch]);
+  }, []); // Only run once on mount
+
+  // Use viewport-based Esri dates that only show dates with actual imagery changes
+  const singleEsriDates = useEsriDates(
+    singleMap,
+    state.viewMode === "single" && state.maps.single.source === "esri"
+  );
+
+  const leftEsriDates = useEsriDates(
+    leftMap,
+    state.viewMode === "split" && state.maps.left.source === "esri"
+  );
+
+  const rightEsriDates = useEsriDates(
+    rightMap,
+    state.viewMode === "split" && state.maps.right.source === "esri"
+  );
+
+  // Update context when Esri dates change (use active map's dates as shared state)
+  useEffect(() => {
+    console.log("[App] Single map Esri dates changed:", singleEsriDates.length);
+    if (singleEsriDates.length > 0 && state.viewMode === "single" && state.maps.single.source === "esri") {
+      console.log("[App] Dispatching SET_ESRI_DATES from single map");
+      dispatch({ type: "SET_ESRI_DATES", dates: singleEsriDates });
+    }
+  }, [singleEsriDates, state.viewMode, state.maps.single.source, dispatch]);
+
+  useEffect(() => {
+    console.log("[App] Left map Esri dates changed:", leftEsriDates.length);
+    if (leftEsriDates.length > 0 && state.viewMode === "split" && state.maps.left.source === "esri") {
+      console.log("[App] Dispatching SET_ESRI_DATES from left map");
+      dispatch({ type: "SET_ESRI_DATES", dates: leftEsriDates });
+    }
+  }, [leftEsriDates, state.viewMode, state.maps.left.source, dispatch]);
+
+  useEffect(() => {
+    console.log("[App] Right map Esri dates changed:", rightEsriDates.length);
+    if (rightEsriDates.length > 0 && state.viewMode === "split" && state.maps.right.source === "esri") {
+      console.log("[App] Dispatching SET_ESRI_DATES from right map");
+      dispatch({ type: "SET_ESRI_DATES", dates: rightEsriDates });
+    }
+  }, [rightEsriDates, state.viewMode, state.maps.right.source, dispatch]);
 
   // ===================
   // Google Earth Dates (Per Map)
@@ -498,6 +546,21 @@ function App() {
           isOpen={isTaskPanelOpen}
           onToggle={() => setIsTaskPanelOpen(!isTaskPanelOpen)}
           refreshTrigger={taskPanelRefreshTrigger}
+          onReExport={(task) => {
+            setReExportTask(task);
+            setIsReExportDialogOpen(true);
+          }}
+        />
+
+        {/* Re-export Dialog */}
+        <ReExportDialog
+          task={reExportTask}
+          isOpen={isReExportDialogOpen}
+          onClose={() => {
+            setIsReExportDialogOpen(false);
+            setReExportTask(null);
+          }}
+          onSuccess={() => setTaskPanelRefreshTrigger(prev => prev + 1)}
         />
       </div>
     </MainLayout>

@@ -173,8 +173,113 @@ func (c *Client) FetchTile(layer *Layer, tile *EsriTile) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// GetAvailableDates returns all available dates for a tile
+// GetAvailableDates returns dates with LOCAL CHANGES for a tile
+// This uses the tilemap API's "select" field to efficiently find only releases
+// where the imagery actually changed for this specific location
+// Additionally, it deduplicates by actual source date (SRC_DATE2) from metadata
 func (c *Client) GetAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
+	if !c.initialized {
+		if err := c.Initialize(); err != nil {
+			return nil, err
+		}
+	}
+
+	c.mu.RLock()
+	layers := c.layerList
+	c.mu.RUnlock()
+
+	if len(layers) == 0 {
+		return nil, fmt.Errorf("no layers available")
+	}
+
+	// Build a map of release number -> layer for quick lookup
+	layerByID := make(map[int]*Layer)
+	for _, layer := range layers {
+		layerByID[layer.ID] = layer
+	}
+
+	// Build index map to find previous release
+	layerIndex := make(map[int]int)
+	for i, layer := range layers {
+		layerIndex[layer.ID] = i
+	}
+
+	// Collect release numbers with local changes using recursive tilemap queries
+	releaseNums := []int{}
+	currentReleaseNum := layers[0].ID // Start with most recent
+
+	for currentReleaseNum > 0 {
+		layer, ok := layerByID[currentReleaseNum]
+		if !ok {
+			break
+		}
+
+		tileMapURL := layer.GetTileMapURL(tile)
+		available, selectReleaseNum, err := c.checkTileMap(tileMapURL)
+		if err != nil {
+			break
+		}
+
+		if available {
+			// Use select[0] if available, otherwise use current release
+			releaseWithChange := currentReleaseNum
+			if selectReleaseNum > 0 {
+				releaseWithChange = selectReleaseNum
+			}
+			releaseNums = append(releaseNums, releaseWithChange)
+
+			// Get the previous release to check
+			idx, ok := layerIndex[releaseWithChange]
+			if !ok || idx+1 >= len(layers) {
+				break
+			}
+			currentReleaseNum = layers[idx+1].ID
+		} else {
+			// No imagery at this tile, stop
+			break
+		}
+	}
+
+	// Now fetch actual capture dates for each release with local changes
+	// and deduplicate by source date (multiple releases can have same imagery)
+	var datedTiles []*DatedTile
+	seenSourceDates := make(map[string]bool)
+
+	for _, releaseNum := range releaseNums {
+		layer, ok := layerByID[releaseNum]
+		if !ok {
+			continue
+		}
+
+		// Get actual capture date from metadata
+		captureDate, err := c.getTileDate(layer, tile)
+		if err != nil {
+			captureDate = layer.Date
+		}
+
+		// Create a key from the source date (date only, no time precision)
+		sourceDateKey := captureDate.Format("2006-01-02")
+
+		// Skip if we already have a release with this source date
+		if seenSourceDates[sourceDateKey] {
+			continue
+		}
+		seenSourceDates[sourceDateKey] = true
+
+		datedTiles = append(datedTiles, &DatedTile{
+			Tile:        tile,
+			Layer:       layer,
+			CaptureDate: captureDate,
+			LayerDate:   layer.Date,
+		})
+	}
+
+	return datedTiles, nil
+}
+
+// GetAllAvailableDates returns ALL available dates for a tile (not just local changes)
+// This is the old behavior - useful for debugging or when you need all layers
+func (c *Client) GetAllAvailableDates(tile *EsriTile) ([]*DatedTile, error) {
 	if !c.initialized {
 		if err := c.Initialize(); err != nil {
 			return nil, err

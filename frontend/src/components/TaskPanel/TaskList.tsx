@@ -10,6 +10,7 @@ interface TaskListProps {
   onSelect: (task: ExportTask) => void;
   onReorder?: (id: string, newIndex: number) => void;
   onOpenFolder?: (path: string) => void;
+  onReExport?: (task: ExportTask) => void;
 }
 
 export function TaskList({
@@ -20,6 +21,7 @@ export function TaskList({
   onSelect,
   onReorder,
   onOpenFolder,
+  onReExport,
 }: TaskListProps) {
   const [draggedId, setDraggedId] = React.useState<string | null>(null);
   const [dragOverIndex, setDragOverIndex] = React.useState<number | null>(null);
@@ -125,6 +127,7 @@ export function TaskList({
               onDelete={onDelete}
               onSelect={onSelect}
               onOpenFolder={onOpenFolder}
+              onReExport={onReExport}
             />
           ))}
         </div>

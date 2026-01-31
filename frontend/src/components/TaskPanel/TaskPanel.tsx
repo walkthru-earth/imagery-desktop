@@ -18,10 +18,11 @@ interface TaskPanelProps {
   isOpen: boolean;
   onToggle: () => void;
   onTaskSelect?: (task: ExportTask) => void;
+  onReExport?: (task: ExportTask) => void;
   refreshTrigger?: number;
 }
 
-export function TaskPanel({ isOpen, onToggle, onTaskSelect, refreshTrigger }: TaskPanelProps) {
+export function TaskPanel({ isOpen, onToggle, onTaskSelect, onReExport, refreshTrigger }: TaskPanelProps) {
   const [tasks, setTasks] = useState<ExportTask[]>([]);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -265,6 +266,7 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, refreshTrigger }: Ta
             onSelect={(task) => onTaskSelect?.(task)}
             onReorder={handleReorderTask}
             onOpenFolder={(path) => api.openFolder(path).catch(console.error)}
+            onReExport={(task) => onReExport?.(task)}
           />
         )}
       </div>

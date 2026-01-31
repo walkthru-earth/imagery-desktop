@@ -81,6 +81,7 @@ export interface VideoExportOptions {
   width: number;
   height: number;
   preset: string;
+  presets?: string[]; // Multiple presets for batch export
   cropX: number;
   cropY: number;
   spotlightEnabled: boolean;

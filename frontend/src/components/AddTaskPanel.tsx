@@ -69,7 +69,7 @@ export function AddTaskPanel({
   const [format, setFormat] = useState<"tiles" | "geotiff" | "both">("geotiff");
   const [includeVideo, setIncludeVideo] = useState(false);
   const [videoFormat, setVideoFormat] = useState<"mp4" | "gif">("mp4");
-  const [videoPreset, setVideoPreset] = useState("youtube");
+  const [selectedPresets, setSelectedPresets] = useState<string[]>(["youtube"]);
   const [frameDelay, setFrameDelay] = useState(0.5);
   const [showDateOverlay, setShowDateOverlay] = useState(true);
   const [datePosition, setDatePosition] = useState("bottom-right");
@@ -80,7 +80,8 @@ export function AddTaskPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [exportZoom, setExportZoom] = useState(zoom);
 
-  const currentPreset = VIDEO_PRESETS.find(p => p.id === videoPreset) || VIDEO_PRESETS[0];
+  // Use first selected preset for crop preview
+  const currentPreset = VIDEO_PRESETS.find(p => p.id === selectedPresets[0]) || VIDEO_PRESETS[0];
 
   const calculateCropPreview = useCallback((): CropPreview => {
     const aspectRatio = currentPreset.width / currentPreset.height;
@@ -163,7 +164,8 @@ export function AddTaskPanel({
         videoOpts = new main.VideoExportOptions({
           width: currentPreset.width,
           height: currentPreset.height,
-          preset: videoPreset,
+          preset: selectedPresets[0],  // Primary preset
+          presets: selectedPresets,    // All selected presets for batch export
           cropX: 0.5,  // Always center
           cropY: 0.5,  // Always center
           spotlightEnabled: false,
@@ -341,23 +343,38 @@ export function AddTaskPanel({
                       </div>
                     </div>
 
-                    {/* Video Preset */}
+                    {/* Video Presets (Multi-select) */}
                     <div className="space-y-2">
-                      <Label className="text-xs">Dimensions</Label>
-                      <Select value={videoPreset} onValueChange={setVideoPreset} disabled={isSubmitting}>
-                        <SelectTrigger size="sm" className="w-full text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {VIDEO_PRESETS.map(preset => (
-                            <SelectItem key={preset.id} value={preset.id} className="text-xs">
+                      <Label className="text-xs">Output Sizes ({selectedPresets.length} selected)</Label>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto bg-background rounded-md p-2 border">
+                        {VIDEO_PRESETS.map(preset => (
+                          <div key={preset.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`preset-${preset.id}`}
+                              checked={selectedPresets.includes(preset.id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedPresets(prev => [...prev, preset.id]);
+                                } else {
+                                  // Ensure at least one preset is selected
+                                  if (selectedPresets.length > 1) {
+                                    setSelectedPresets(prev => prev.filter(id => id !== preset.id));
+                                  }
+                                }
+                              }}
+                              disabled={isSubmitting}
+                            />
+                            <Label
+                              htmlFor={`preset-${preset.id}`}
+                              className="text-xs cursor-pointer flex-1"
+                            >
                               {preset.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
                       <p className="text-xs text-muted-foreground">
-                        Pan the map to position your export area
+                        Select multiple sizes to export. Pan the map to position.
                       </p>
                     </div>
 

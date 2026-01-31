@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Play, Pause, Trash2, GripVertical, CheckCircle, XCircle, Loader2, Clock, FolderOpen } from "lucide-react";
+import { Play, Pause, Trash2, GripVertical, CheckCircle, XCircle, Loader2, Clock, FolderOpen, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ExportTask, TaskStatus } from "@/types";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ interface TaskItemProps {
   onDelete?: (id: string) => void;
   onSelect?: (task: ExportTask) => void;
   onOpenFolder?: (path: string) => void;
+  onReExport?: (task: ExportTask) => void;
   isDragging?: boolean;
 }
 
@@ -37,11 +38,13 @@ export function TaskItem({
   onDelete,
   onSelect,
   onOpenFolder,
+  onReExport,
   isDragging,
 }: TaskItemProps) {
   const canDelete = task.status !== "running";
   const canCancel = task.status === "running" || task.status === "pending";
   const canOpenFolder = task.status === "completed" && task.outputPath;
+  const canReExport = task.status === "completed" && task.videoExport;
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "";
@@ -119,6 +122,20 @@ export function TaskItem({
         "flex items-center gap-1 transition-opacity",
         (task.status === "pending" || task.status === "completed") ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       )}>
+        {canReExport && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReExport?.(task);
+            }}
+            title="Re-export with different presets"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
+        )}
         {canOpenFolder && (
           <Button
             variant="ghost"

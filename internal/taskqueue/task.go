@@ -36,24 +36,25 @@ type GEDateInfo struct {
 
 // VideoExportOptions contains video export settings (matches app.go definition)
 type VideoExportOptions struct {
-	Width            int     `json:"width"`
-	Height           int     `json:"height"`
-	Preset           string  `json:"preset"`
-	CropX            float64 `json:"cropX"`
-	CropY            float64 `json:"cropY"`
-	SpotlightEnabled bool    `json:"spotlightEnabled"`
+	Width            int      `json:"width"`
+	Height           int      `json:"height"`
+	Preset           string   `json:"preset"`
+	Presets          []string `json:"presets,omitempty"` // Multiple presets for batch export
+	CropX            float64  `json:"cropX"`
+	CropY            float64  `json:"cropY"`
+	SpotlightEnabled bool     `json:"spotlightEnabled"`
 	SpotlightCenterLat float64 `json:"spotlightCenterLat"`
 	SpotlightCenterLon float64 `json:"spotlightCenterLon"`
 	SpotlightRadiusKm  float64 `json:"spotlightRadiusKm"`
-	OverlayOpacity   float64 `json:"overlayOpacity"`
-	ShowDateOverlay  bool    `json:"showDateOverlay"`
-	DateFontSize     float64 `json:"dateFontSize"`
-	DatePosition     string  `json:"datePosition"`
-	ShowLogo         bool    `json:"showLogo"`
-	LogoPosition     string  `json:"logoPosition"`
-	FrameDelay       float64 `json:"frameDelay"`
-	OutputFormat     string  `json:"outputFormat"`
-	Quality          int     `json:"quality"`
+	OverlayOpacity   float64  `json:"overlayOpacity"`
+	ShowDateOverlay  bool     `json:"showDateOverlay"`
+	DateFontSize     float64  `json:"dateFontSize"`
+	DatePosition     string   `json:"datePosition"`
+	ShowLogo         bool     `json:"showLogo"`
+	LogoPosition     string   `json:"logoPosition"`
+	FrameDelay       float64  `json:"frameDelay"`
+	OutputFormat     string   `json:"outputFormat"`
+	Quality          int      `json:"quality"`
 }
 
 // CropPreview represents crop area for map preview (relative 0-1 coords)

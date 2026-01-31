@@ -117,7 +117,8 @@ type ExportOptions struct {
 	DateColor       color.RGBA
 	DateShadow      bool
 	DateFormat      string // e.g., "2006-01-02", "Jan 02, 2006"
-	DateFontPath    string // Path to font file
+	DateFontPath    string // Path to font file (optional if DateFontData is provided)
+	DateFontData    []byte // Embedded font data (TTF/OTF)
 
 	// Logo overlay
 	ShowLogo     bool
@@ -302,10 +303,12 @@ func NewExporter(opts *ExportOptions) (*Exporter, error) {
 	}
 
 	// Load font if date overlay is enabled
-	if opts.ShowDateOverlay && opts.DateFontPath != "" {
+	if opts.ShowDateOverlay && (opts.DateFontPath != "" || len(opts.DateFontData) > 0) {
 		if err := e.loadFont(); err != nil {
 			log.Printf("[VideoExport] Warning: failed to load font: %v", err)
 			// Don't fail - continue without date overlay
+		} else {
+			log.Printf("[VideoExport] Font loaded successfully for date overlay")
 		}
 	}
 
@@ -317,11 +320,23 @@ func (e *Exporter) HasFFmpeg() bool {
 	return e.ffmpegPath != ""
 }
 
-// loadFont loads the font for date overlay
+// loadFont loads the font for date overlay (from embedded data or file)
 func (e *Exporter) loadFont() error {
-	fontBytes, err := os.ReadFile(e.options.DateFontPath)
-	if err != nil {
-		return fmt.Errorf("failed to read font file: %w", err)
+	var fontBytes []byte
+	var err error
+
+	// Prefer embedded font data if available
+	if len(e.options.DateFontData) > 0 {
+		fontBytes = e.options.DateFontData
+		log.Printf("[VideoExport] Using embedded font data (%d bytes)", len(fontBytes))
+	} else if e.options.DateFontPath != "" {
+		fontBytes, err = os.ReadFile(e.options.DateFontPath)
+		if err != nil {
+			return fmt.Errorf("failed to read font file: %w", err)
+		}
+		log.Printf("[VideoExport] Loaded font from file: %s", e.options.DateFontPath)
+	} else {
+		return fmt.Errorf("no font data or path provided")
 	}
 
 	f, err := opentype.Parse(fontBytes)
@@ -447,22 +462,57 @@ func (e *Exporter) drawSpotlightArea(dst *image.RGBA, src image.Image) {
 	}
 }
 
-// resizeAndDrawImage resizes source to fit destination
+// resizeAndDrawImage scales source to fill destination and crops to fit (maintains aspect ratio)
 func (e *Exporter) resizeAndDrawImage(dst *image.RGBA, src image.Image) {
-	bounds := src.Bounds()
+	srcBounds := src.Bounds()
 	dstBounds := dst.Bounds()
 
-	// Simple nearest-neighbor scaling (fast, good enough for video)
-	scaleX := float64(bounds.Dx()) / float64(dstBounds.Dx())
-	scaleY := float64(bounds.Dy()) / float64(dstBounds.Dy())
+	srcW := float64(srcBounds.Dx())
+	srcH := float64(srcBounds.Dy())
+	dstW := float64(dstBounds.Dx())
+	dstH := float64(dstBounds.Dy())
 
-	for dy := dstBounds.Min.Y; dy < dstBounds.Max.Y; dy++ {
-		for dx := dstBounds.Min.X; dx < dstBounds.Max.X; dx++ {
-			sx := bounds.Min.X + int(float64(dx-dstBounds.Min.X)*scaleX)
-			sy := bounds.Min.Y + int(float64(dy-dstBounds.Min.Y)*scaleY)
+	// Calculate scale factor to FILL destination (use larger scale)
+	// This ensures the image covers the entire destination
+	scaleX := dstW / srcW
+	scaleY := dstH / srcH
+	scale := scaleX
+	if scaleY > scaleX {
+		scale = scaleY // Use larger scale to fill
+	}
 
-			if sx >= bounds.Min.X && sx < bounds.Max.X && sy >= bounds.Min.Y && sy < bounds.Max.Y {
-				dst.Set(dx, dy, src.At(sx, sy))
+	// Scaled source dimensions
+	scaledW := srcW * scale
+	scaledH := srcH * scale
+
+	// Calculate crop offset based on CropX/CropY (0.0-1.0)
+	// CropX=0.5 means center horizontally
+	cropX := e.options.CropX
+	cropY := e.options.CropY
+	if cropX < 0 || cropX > 1 {
+		cropX = 0.5
+	}
+	if cropY < 0 || cropY > 1 {
+		cropY = 0.5
+	}
+
+	// Offset in scaled coordinates
+	offsetX := (scaledW - dstW) * cropX
+	offsetY := (scaledH - dstH) * cropY
+
+	// Draw with proper scaling and cropping
+	for dy := 0; dy < int(dstH); dy++ {
+		for dx := 0; dx < int(dstW); dx++ {
+			// Map destination pixel to source pixel
+			sx := (float64(dx) + offsetX) / scale
+			sy := (float64(dy) + offsetY) / scale
+
+			srcX := srcBounds.Min.X + int(sx)
+			srcY := srcBounds.Min.Y + int(sy)
+
+			if srcX >= srcBounds.Min.X && srcX < srcBounds.Max.X &&
+				srcY >= srcBounds.Min.Y && srcY < srcBounds.Max.Y {
+				dst.Set(dstBounds.Min.X+dx, dstBounds.Min.Y+dy, src.At(srcX, srcY))
 			}
 		}
 	}
