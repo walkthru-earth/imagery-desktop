@@ -11,7 +11,7 @@
 ### 1.1 Standardize Provider Naming
 - [x] Analysis complete
 - [ ] Change cache strings: `"google"` → `"google_earth"`, `"esri"` → `"esri_wayback"`
-- [ ] Update URL paths: `/ge/` → `/google-earth/`, `/ge-historical/` → `/google-earth-historical/`
+- [x] Update URL paths: `/ge/` → `/google-earth/`, `/ge-historical/` → `/google-earth-historical/`
 - [ ] Rename functions: Ensure all Google Earth functions use `GoogleEarth` prefix, all Esri use `EsriWayback`
 - [ ] Update type names: `GEAvailableDate` → `GoogleEarthDate`, add `EsriWaybackDate`
 

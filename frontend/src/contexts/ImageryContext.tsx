@@ -6,7 +6,7 @@ import type { AvailableDate, GEAvailableDate } from "@/types";
 // ===================
 
 export type ViewMode = "single" | "split";
-export type ImagerySource = "esri" | "google";
+export type ImagerySource = "esri_wayback" | "google_earth";
 export type MapKey = "single" | "left" | "right";
 
 export interface MapState {
@@ -64,7 +64,7 @@ export type ImageryAction =
 // ===================
 
 const initialMapState: MapState = {
-  source: "esri",
+  source: "esri_wayback",
   geDates: [],
   dateIndex: 0,
   styleLoaded: false,
@@ -78,7 +78,7 @@ const initialState: ImageryState = {
   maps: {
     single: { ...initialMapState },
     left: { ...initialMapState },
-    right: { ...initialMapState, source: "google" },
+    right: { ...initialMapState, source: "google_earth" },
   },
   layers: {
     imagery: { visible: true, opacity: 1 },
@@ -273,7 +273,7 @@ export function getCurrentDate(
 ): AvailableDate | GEAvailableDate | null {
   const mapState = state.maps[map];
 
-  if (mapState.source === "esri") {
+  if (mapState.source === "esri_wayback") {
     return state.esriDates[mapState.dateIndex] || null;
   } else {
     return mapState.geDates[mapState.dateIndex] || null;
@@ -289,7 +289,7 @@ export function getAvailableDates(
 ): Array<AvailableDate | GEAvailableDate> {
   const mapState = state.maps[map];
 
-  if (mapState.source === "esri") {
+  if (mapState.source === "esri_wayback") {
     return state.esriDates;
   } else {
     return mapState.geDates;

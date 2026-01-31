@@ -86,7 +86,7 @@ type ExportTask struct {
 	CompletedAt string     `json:"completedAt,omitempty"`
 
 	// Export settings
-	Source string      `json:"source"` // "esri" or "google"
+	Source string      `json:"source"` // "esri_wayback" or "google_earth"
 	BBox   BoundingBox `json:"bbox"`
 	Zoom   int         `json:"zoom"`
 	Format string      `json:"format"` // "tiles", "geotiff", "both"

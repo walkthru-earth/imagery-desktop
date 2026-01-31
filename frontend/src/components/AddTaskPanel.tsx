@@ -23,7 +23,7 @@ export interface AddTaskPanelProps {
   onClose: () => void;
   bbox: BoundingBox | null;
   zoom: number;
-  source: "esri" | "google";
+  source: "esri_wayback" | "google_earth";
   singleDate?: string;
   singleHexDate?: string;
   singleEpoch?: number;
@@ -156,8 +156,8 @@ export function AddTaskPanel({
       console.log("[AddTaskPanel] Dates:", dates);
 
       const taskName = isRangeMode
-        ? `${source === "esri" ? "Esri" : "Google Earth"} ${dates.length} dates (Z${exportZoom})`
-        : `${source === "esri" ? "Esri" : "Google Earth"} ${singleDate} (Z${exportZoom})`;
+        ? `${source === "esri_wayback" ? "Esri" : "Google Earth"} ${dates.length} dates (Z${exportZoom})`
+        : `${source === "esri_wayback" ? "Esri" : "Google Earth"} ${singleDate} (Z${exportZoom})`;
 
       let videoOpts: main.VideoExportOptions | undefined;
       if (includeVideo && isRangeMode && format !== "tiles") {
@@ -199,7 +199,7 @@ export function AddTaskPanel({
         status: "pending",
         priority: 0,
         createdAt: new Date().toISOString(),
-        source: source === "esri" ? "esri" : "google",
+        source: source === "esri_wayback" ? "esri_wayback" : "google_earth",
         bbox: taskBbox,
         zoom: exportZoom,
         format,
@@ -255,7 +255,7 @@ export function AddTaskPanel({
             Add Task: {isRangeMode ? `${dateRange?.length} Dates` : "Single Date"}
           </h2>
           <p className="text-sm text-muted-foreground">
-            {source === "esri" ? "Esri Wayback" : "Google Earth"}
+            {source === "esri_wayback" ? "Esri Wayback" : "Google Earth"}
           </p>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} disabled={isSubmitting}>

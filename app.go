@@ -2627,7 +2627,7 @@ func (a *App) exportTimelapseVideoInternal(bbox BoundingBox, zoom int, dates []G
 		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
 		// Convert source to match download naming convention
 		downloadSource := source
-		if source == "google" || source == "ge" {
+		if source == common.ProviderGoogleEarth || source == "google" || source == "ge" {
 			downloadSource = "ge_historical"
 		}
 		filename := generateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox, zoom)
@@ -3213,7 +3213,7 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 	// For Esri: deduplicate by checking center tile hash
 	var esriSeenHashes map[string]string
 	var esriCenterTile *esri.EsriTile
-	if task.Source == "esri" {
+	if task.Source == common.ProviderEsriWayback || task.Source == "esri" {
 		esriSeenHashes = make(map[string]string)
 		centerLat := (bbox.South + bbox.North) / 2
 		centerLon := (bbox.West + bbox.East) / 2
@@ -3238,12 +3238,12 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		// Download imagery based on source
 		var err error
 		switch task.Source {
-		case "google", "ge":
+		case common.ProviderGoogleEarth, "google", "ge":
 			err = a.DownloadGoogleEarthHistoricalImagery(bbox, task.Zoom, dateInfo.HexDate, dateInfo.Epoch, dateInfo.Date, task.Format)
 			if err == nil {
 				downloadedCount++
 			}
-		case "esri":
+		case common.ProviderEsriWayback, "esri":
 			// Deduplicate Esri downloads by checking center tile hash
 			// Also detect blank tiles (no coverage at this zoom level)
 			shouldDownload := true

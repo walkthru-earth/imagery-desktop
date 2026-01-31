@@ -99,7 +99,7 @@ sequenceDiagram
     participant Provider as Google Earth/Esri
 
     UI->>API: Request tile (z, x, y, date)
-    API->>TS: GET /ge/{date}/{z}/{x}/{y}
+    API->>TS: GET /google-earth/{date}/{z}/{x}/{y}
 
     TS->>Cache: Get(provider:z:x:y:date)
 

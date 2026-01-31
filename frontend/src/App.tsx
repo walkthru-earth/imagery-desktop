@@ -265,24 +265,24 @@ function App() {
   // No global fallback - wait for viewport-specific dates to load
   const { dates: singleEsriDates, isLoading: singleEsriLoading } = useEsriDates(
     singleMap,
-    state.viewMode === "single" && state.maps.single.source === "esri"
+    state.viewMode === "single" && state.maps.single.source === "esri_wayback"
   );
 
   const { dates: leftEsriDates, isLoading: leftEsriLoading } = useEsriDates(
     leftMap,
-    state.viewMode === "split" && state.maps.left.source === "esri"
+    state.viewMode === "split" && state.maps.left.source === "esri_wayback"
   );
 
   const { dates: rightEsriDates, isLoading: rightEsriLoading } = useEsriDates(
     rightMap,
-    state.viewMode === "split" && state.maps.right.source === "esri"
+    state.viewMode === "split" && state.maps.right.source === "esri_wayback"
   );
 
   // Track if any Esri dates are loading
   const esriDatesLoading =
-    (state.viewMode === "single" && state.maps.single.source === "esri" && singleEsriLoading) ||
-    (state.viewMode === "split" && state.maps.left.source === "esri" && leftEsriLoading) ||
-    (state.viewMode === "split" && state.maps.right.source === "esri" && rightEsriLoading);
+    (state.viewMode === "single" && state.maps.single.source === "esri_wayback" && singleEsriLoading) ||
+    (state.viewMode === "split" && state.maps.left.source === "esri_wayback" && leftEsriLoading) ||
+    (state.viewMode === "split" && state.maps.right.source === "esri_wayback" && rightEsriLoading);
 
   // Dispatch loading state to context
   useEffect(() => {
@@ -292,7 +292,7 @@ function App() {
   // Update context when Esri dates change (use active map's dates as shared state)
   // Dispatch whenever dates change AND source is esri (even if empty, to replace global dates)
   useEffect(() => {
-    if (state.viewMode === "single" && state.maps.single.source === "esri") {
+    if (state.viewMode === "single" && state.maps.single.source === "esri_wayback") {
       console.log("[App] Single map Esri dates changed:", singleEsriDates.length);
       if (singleEsriDates.length > 0) {
         console.log("[App] Dispatching SET_ESRI_DATES from single map");
@@ -302,7 +302,7 @@ function App() {
   }, [singleEsriDates, state.viewMode, state.maps.single.source, dispatch]);
 
   useEffect(() => {
-    if (state.viewMode === "split" && state.maps.left.source === "esri") {
+    if (state.viewMode === "split" && state.maps.left.source === "esri_wayback") {
       console.log("[App] Left map Esri dates changed:", leftEsriDates.length);
       if (leftEsriDates.length > 0) {
         console.log("[App] Dispatching SET_ESRI_DATES from left map");
@@ -312,7 +312,7 @@ function App() {
   }, [leftEsriDates, state.viewMode, state.maps.left.source, dispatch]);
 
   useEffect(() => {
-    if (state.viewMode === "split" && state.maps.right.source === "esri") {
+    if (state.viewMode === "split" && state.maps.right.source === "esri_wayback") {
       console.log("[App] Right map Esri dates changed:", rightEsriDates.length);
       if (rightEsriDates.length > 0) {
         console.log("[App] Dispatching SET_ESRI_DATES from right map");
@@ -326,24 +326,24 @@ function App() {
   // ===================
   const { dates: singleGeDates, isLoading: singleGeLoading } = useGoogleEarthDates(
     singleMap,
-    state.viewMode === "single" && state.maps.single.source === "google"
+    state.viewMode === "single" && state.maps.single.source === "google_earth"
   );
 
   const { dates: leftGeDates, isLoading: leftGeLoading } = useGoogleEarthDates(
     leftMap,
-    state.viewMode === "split" && state.maps.left.source === "google"
+    state.viewMode === "split" && state.maps.left.source === "google_earth"
   );
 
   const { dates: rightGeDates, isLoading: rightGeLoading } = useGoogleEarthDates(
     rightMap,
-    state.viewMode === "split" && state.maps.right.source === "google"
+    state.viewMode === "split" && state.maps.right.source === "google_earth"
   );
 
   // Track if any GE dates are loading
   const geDatesLoading =
-    (state.viewMode === "single" && state.maps.single.source === "google" && singleGeLoading) ||
-    (state.viewMode === "split" && state.maps.left.source === "google" && leftGeLoading) ||
-    (state.viewMode === "split" && state.maps.right.source === "google" && rightGeLoading);
+    (state.viewMode === "single" && state.maps.single.source === "google_earth" && singleGeLoading) ||
+    (state.viewMode === "split" && state.maps.left.source === "google_earth" && leftGeLoading) ||
+    (state.viewMode === "split" && state.maps.right.source === "google_earth" && rightGeLoading);
 
   // Dispatch GE loading state to context
   useEffect(() => {
@@ -504,7 +504,7 @@ function App() {
     const bbox = getCurrentBbox();
     const zoom = Math.round(currentMap.getZoom());
 
-    if (mapState.source === "esri") {
+    if (mapState.source === "esri_wayback") {
       // Only pass dateRange if user explicitly selected a range
       const dateRange = selectedDateRange && selectedDateRange.length > 1
         ? selectedDateRange.map(d => ({ date: d.date }))
@@ -513,7 +513,7 @@ function App() {
       return {
         bbox,
         zoom,
-        source: "esri" as const,
+        source: "esri_wayback" as const,
         singleDate: currentDate.date,
         dateRange,
       };
@@ -532,7 +532,7 @@ function App() {
       return {
         bbox,
         zoom,
-        source: "google" as const,
+        source: "google_earth" as const,
         singleDate: geDate.date,
         singleHexDate: geDate.hexDate,
         singleEpoch: geDate.epoch,
@@ -619,7 +619,7 @@ function App() {
           {...(getTaskData() || {
             bbox: null,
             zoom: 10,
-            source: "esri",
+            source: "esri_wayback",
           })}
         />
 

@@ -19,7 +19,7 @@ export interface DownloadProgress {
 }
 
 // Imagery Source
-export type ImagerySource = 'esri' | 'google';
+export type ImagerySource = 'esri_wayback' | 'google_earth';
 
 // Selection Mode
 export type SelectionMode = 'draw' | 'viewport';

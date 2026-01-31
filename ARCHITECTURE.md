@@ -786,13 +786,13 @@ The application runs a local HTTP server to reproject Google Earth tiles on-dema
 ```
 Local Server Endpoints:
 
-/ge/{z}/{x}/{y}
+/google-earth/{date}/{z}/{x}/{y}
 - Converts XYZ to GE quadtree path
 - Fetches current imagery tile
 - Reprojects to Web Mercator
 - Returns PNG
 
-/ge-historical/{hexDate}/{z}/{x}/{y}
+/google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
 - Uses hex date for historical imagery
 - Applies epoch fallback if needed
 - Reprojects to Web Mercator

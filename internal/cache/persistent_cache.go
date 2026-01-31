@@ -26,7 +26,7 @@ type PersistentTileCache struct {
 // TileMetadata stores information about a cached tile
 type TileMetadata struct {
 	Key        string    `json:"key"`
-	Provider   string    `json:"provider"` // "google", "esri", etc.
+	Provider   string    `json:"provider"` // "google_earth", "esri_wayback", etc.
 	Z          int       `json:"z"`
 	X          int       `json:"x"`
 	Y          int       `json:"y"`

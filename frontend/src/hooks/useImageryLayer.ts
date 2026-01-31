@@ -42,7 +42,7 @@ export function useImageryLayer(
         // Get tile URL based on source
         let tileURL: string;
 
-        if (source === "esri") {
+        if (source === "esri_wayback") {
           tileURL = await api.getEsriTileURL(date.date);
         } else {
           // Google Earth (both current and historical use same endpoint with date)
@@ -69,7 +69,7 @@ export function useImageryLayer(
             tiles: [tileURL],
             tileSize: 256,
             attribution:
-                source === "esri"
+                source === "esri_wayback"
                 ? "&copy; Esri World Imagery Wayback"
                 : "&copy; Google Earth",
             });

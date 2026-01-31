@@ -349,8 +349,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       onChange={(e) => setSettings({ ...settings, defaultSource: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg bg-background text-sm"
                     >
-                      <option value="esri">Esri Wayback</option>
-                      <option value="google">Google Earth</option>
+                      <option value="esri_wayback">Esri Wayback</option>
+                      <option value="google_earth">Google Earth</option>
                       {settings.customSources.map((source) => (
                         <option key={source.name} value={source.name}>
                           {source.name}

@@ -40,7 +40,7 @@ type UserSettings struct {
 
 	// Default map settings
 	DefaultZoom      int     `json:"defaultZoom"`
-	DefaultSource    string  `json:"defaultSource"` // "esri", "google", or custom source name
+	DefaultSource    string  `json:"defaultSource"` // "esri_wayback", "google_earth", or custom source name
 	DefaultCenterLat float64 `json:"defaultCenterLat"`
 	DefaultCenterLon float64 `json:"defaultCenterLon"`
 
@@ -83,7 +83,7 @@ func DefaultSettings() *UserSettings {
 		CacheTTLDays:          90,  // Increased default: 90 days
 		AutoRetryOnRateLimit:  true,
 		DefaultZoom:          15,
-		DefaultSource:        "esri",
+		DefaultSource:        "esri_wayback",
 		DefaultCenterLat:     30.0621, // Zamalek, Cairo, Egypt
 		DefaultCenterLon:     31.2219,
 		DownloadZoomStrategy: "fixed",
