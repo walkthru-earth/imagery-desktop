@@ -1227,10 +1227,15 @@ graph LR
    - Sort by frequency (how many dates use this epoch)
    - Most common epochs are tried first
 
-3. **Layer 3: Known-Good Epochs** [app.go:1039-1077]
-   - If both previous layers fail, try hardcoded list: `[358, 357, 356, 354, 352]`
-   - **Critical for 2025 dates:** These epochs may not exist in protobuf but work empirically
-   - Mirrors Google Earth Web's strategy
+3. **Layer 3: Known-Good Epochs** [googleearth.go:407-414]
+   - If both previous layers fail, try hardcoded list: `[365, 361, 360, 358, 357, 356, 354, 352, 321, 296, 273]`
+   - **Critical for 2025+ dates:** These epochs may not exist in protobuf but work empirically
+   - Epochs ordered newest-first (more likely to have tiles for recent dates):
+     - `365, 361, 360`: 2025+ dates at high zoom levels (17-21)
+     - `358, 357, 356, 354, 352`: 2024 dates
+     - `321`: 2023 dates
+     - `296, 273`: 2020-2022 dates
+   - Mirrors Google Earth Desktop (Pro) behavior
    - Skips epochs already tried in previous layers
 
 **Additional Optimizations:**
@@ -1258,19 +1263,26 @@ graph LR
 
 **Example Log Output:**
 ```
-[DEBUG fetchHistoricalGETile] Attempting fetch: tile 02002021313303022212, epoch 359, hexDate fd27e
-[DEBUG fetchHistoricalGETile] Primary epoch 359 failed, trying fallback epochs...
-[DEBUG fetchHistoricalGETile] Fallback epoch 295 failed (HTTP 404)
-[DEBUG fetchHistoricalGETile] Fallback epoch 345 failed (HTTP 404)
-[DEBUG fetchHistoricalGETile] Trying known-good epoch 358...
-[DEBUG fetchHistoricalGETile] SUCCESS with known-good epoch 358
+[DEBUG fetchHistoricalGETile] Attempting fetch: tile 020020213031233233, epoch 366
+[TimeMachine] Historical tile request failed. Status: 404
+
+[DEBUG fetchHistoricalGETile] Trying known-good epochs: [365 361 360 358 357 356 354 352 321 296 273]
+[DEBUG fetchHistoricalGETile] Trying known-good epoch 365...
+[TimeMachine] Historical tile request failed. Status: 404
+
+[DEBUG fetchHistoricalGETile] Trying known-good epoch 361...
+[TimeMachine] Historical tile request failed. Status: 404
+
+[DEBUG fetchHistoricalGETile] Trying known-good epoch 360...
+[DEBUG fetchHistoricalGETile] SUCCESS with known-good epoch 360
 ```
 
 **Test Coverage:**
-- 116 API tests across zoom levels 15-21
-- Verified epochs 273, 295, 345, 358, 359
-- Confirmed epoch 358 works for 2025-03-30 at zoom 17-19 (despite not being in protobuf)
-- Manual testing: Cairo (30.12°N, 31.66°E) with dates 2020-2025
+- HAR analysis from Google Earth Pro Desktop (requestly_logs.har) - 553 requests, 100% success
+- HAR analysis from Google Earth Web (earth.google.com HAR) - RT/Earth API patterns
+- Verified epochs 273, 296, 321, 352, 354, 356, 357, 358, 360, 361, 365
+- Confirmed epoch 360 works for 2025-01-30 (hexDate: fd2be) at zoom 17+ from HAR evidence
+- Manual testing: Cairo (30.06°N, 31.22°E) with dates 2020-2025
 
 ### Fix 2: Projection Alignment (Jan 2025)
 

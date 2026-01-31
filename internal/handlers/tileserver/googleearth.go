@@ -404,9 +404,14 @@ func (s *Server) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate str
 		}
 	}
 
-	// Last resort: Try known-good epochs for 2025+ dates
+	// Last resort: Try known-good epochs for recent dates
 	// These epochs may not be in the protobuf but are known to work from testing
-	knownGoodEpochs := []int{358, 357, 356, 354, 352}
+	// Epochs are ordered newest-first (more likely to have tiles for recent dates):
+	// - 365, 361, 360: 2025+ dates at high zoom levels (17-21)
+	// - 358, 357, 356, 354, 352: 2024 dates
+	// - 321: 2023 dates
+	// - 296, 273: 2020-2022 dates
+	knownGoodEpochs := []int{365, 361, 360, 358, 357, 356, 354, 352, 321, 296, 273}
 	for _, knownEpoch := range knownGoodEpochs {
 		// Skip if already tried
 		if knownEpoch == epoch {

@@ -20,7 +20,7 @@ import (
 // It uses a 3-layer epoch fallback strategy:
 // 1. Try the protobuf-reported epoch for the exact date
 // 2. Fall back to other epochs from the same tile (sorted by frequency)
-// 3. Try known-good epochs (358, 357, 356, 354, 352) for 2025+ dates
+// 3. Try known-good epochs (365, 361, 360, 358, 357, 356, 354, 352, 321, 296, 273)
 //
 // Additionally, it supports zoom fallback - if tiles don't exist at the requested zoom,
 // it will try lower zoom levels and extract/upscale the correct quadrant.

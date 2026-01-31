@@ -6,7 +6,10 @@ This document contains technical notes and API details for downloading historica
 
 ## Table of Contents
 
-1. [Google Earth Pro API](#google-earth-pro-api)
+1. [Google Earth API Overview](#google-earth-api-overview)
+   - [Two Different APIs](#two-different-apis)
+   - [Known-Good Epochs](#known-good-epochs)
+2. [Google Earth Pro API (Flatfile)](#google-earth-pro-api)
    - [Database Root](#database-root)
    - [Tile Coordinate System](#tile-coordinate-system)
    - [Two Packet Formats](#two-packet-formats)
@@ -15,14 +18,97 @@ This document contains technical notes and API details for downloading historica
    - [Date Encoding Format](#date-encoding-format)
    - [Getting Available Dates](#getting-available-dates)
    - [Required Headers](#required-headers)
-2. [Esri World Imagery Wayback API](#esri-world-imagery-wayback-api)
+3. [Google Earth Web API (RT/Earth)](#google-earth-web-api-rtearth)
+4. [Esri World Imagery Wayback API](#esri-world-imagery-wayback-api)
    - [WMTS Capabilities](#wmts-capabilities)
    - [Layer Structure](#layer-structure)
    - [Tile URLs](#esri-tile-urls)
    - [Date Availability](#date-availability)
-3. [Implementation Architecture](#implementation-architecture)
-4. [Data Flow Diagrams](#data-flow-diagrams)
-5. [Sources & References](#sources--references)
+5. [Implementation Architecture](#implementation-architecture)
+6. [Data Flow Diagrams](#data-flow-diagrams)
+7. [Sources & References](#sources--references)
+
+---
+
+## Google Earth API Overview
+
+### Two Different APIs
+
+Google provides **two different APIs** for accessing historical satellite imagery. Understanding the differences is critical for debugging and development.
+
+#### 1. Flatfile API (Used by Google Earth Pro Desktop)
+
+This is the API used by our application. It requires XOR decryption and separate database initialization.
+
+**URL Patterns:**
+```
+Database Root:    https://khmdb.google.com/dbRoot.v5?db=tm&hl=en&gl=us&output=proto
+Quadtree Packet:  https://khmdb.google.com/flatfile?db=tm&qp-{path}-q.{epoch}
+Historical Tile:  https://khmdb.google.com/flatfile?db=tm&f1-{path}-i.{epoch}-{hexDate}
+Current Tile:     https://kh.google.com/flatfile?f1-{path}-i.{epoch}
+```
+
+**Characteristics:**
+- Requires XOR decryption with encryption key from dbRoot
+- Requires zlib decompression
+- Path includes leading "0" (e.g., `020020213031233`)
+- Epoch is tile-specific and date-specific
+- Separate encryption keys for default and TimeMachine databases
+
+#### 2. RT/Earth API (Used by Google Earth Web)
+
+This is the newer API used by the web version of Google Earth. It uses protobuf-encoded URL parameters.
+
+**URL Patterns:**
+```
+Current NodeData:     https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s{path}!2u{epoch}!2e1!3u{version}!4b0
+Historical NodeData:  https://kh.google.com/rt/tm/earth/NodeData/pb=!1m2!1s{path}!2u{epoch}!2e1!3u{tileEpoch}!4b0!5i{packedDate}
+BulkMetadata:         https://kh.google.com/rt/tm/earth/BulkMetadata/pb=!1m2!1s{path}!2u{epoch}
+```
+
+**URL Parameter Encoding:**
+- `!1m2` = Message 1 with 2 sub-fields
+- `!1s{path}` = Field 1, string (quadtree path WITHOUT leading 0)
+- `!2u{epoch}` = Field 2, unsigned int (epoch)
+- `!2e1` = Field 2, enum value 1
+- `!3u{version}` = Field 3, unsigned int (tile-specific version/epoch)
+- `!4b0` = Field 4, bool (false)
+- `!5i{packedDate}` = Field 5, int32 (packed date for historical)
+
+**Characteristics:**
+- No leading "0" in path (e.g., `30434352427140517356` not `030434352427140517356`)
+- Date encoded as packed integer directly in URL
+- NodeData responses contain embedded imagery (15-30KB)
+- BulkMetadata provides epoch information for multiple tiles
+
+**Example from HAR analysis:**
+```
+# Historical tile for 2024-12-30 at high zoom
+https://kh.google.com/rt/tm/earth/NodeData/pb=!1m2!1s30434352427140517356!2u999!2e1!3u361!4b0!5i1036702
+
+# Breaking down the URL:
+# - path: 30434352427140517356 (zoom ~20)
+# - epoch: 999
+# - tileEpoch: 361
+# - packedDate: 1036702 = 2024-12-30
+```
+
+### Known-Good Epochs
+
+Through HAR file analysis of Google Earth Pro Desktop, we discovered the following epoch mappings:
+
+| Epoch Range | Date Range | Notes |
+|-------------|------------|-------|
+| 365, 361, 360 | 2025+ | Newest epochs for recent dates |
+| 358, 357, 356, 354, 352 | 2024 | Mid-range recent epochs |
+| 321 | 2023 | 2023 dates |
+| 296, 273 | 2020-2022 | Older date epochs |
+
+**Important:** The protobuf metadata at high zoom levels (17+) often reports incorrect epochs. The tiles exist but with different epochs than reported. Our implementation uses a three-layer fallback strategy:
+
+1. **Layer 1:** Try protobuf-reported epoch
+2. **Layer 2:** Try other epochs from the tile's date list (by frequency)
+3. **Layer 3:** Try known-good epochs: `[365, 361, 360, 358, 357, 356, 354, 352, 321, 296, 273]`
 
 ---
 
@@ -484,6 +570,105 @@ Accept-Encoding: gzip
 Accept-Language: en-US,*
 Connection: Keep-Alive
 ```
+
+---
+
+## Google Earth Web API (RT/Earth)
+
+This section documents the newer API used by Google Earth Web (earth.google.com). While our application uses the Flatfile API, understanding the RT/Earth API is useful for debugging and HAR file analysis.
+
+### API Structure
+
+The RT/Earth API uses URL-encoded protobuf parameters:
+
+```
+Base URL: https://kh.google.com/rt/
+
+Endpoints:
+- /rt/earth/NodeData/pb=...       (current imagery)
+- /rt/tm/earth/NodeData/pb=...    (historical imagery - TimeMachine)
+- /rt/earth/BulkMetadata/pb=...   (metadata for tile regions)
+- /rt/tm/earth/BulkMetadata/pb=... (historical metadata)
+```
+
+### URL Parameter Format
+
+The `pb=` parameter uses a compact protobuf encoding:
+
+| Prefix | Meaning | Example |
+|--------|---------|---------|
+| `!{N}m{count}` | Message N with count sub-fields | `!1m2` |
+| `!{N}s{string}` | Field N, string value | `!1s30434352` |
+| `!{N}u{uint}` | Field N, unsigned int | `!2u999` |
+| `!{N}i{int}` | Field N, signed int | `!5i1036702` |
+| `!{N}e{enum}` | Field N, enum value | `!2e1` |
+| `!{N}b{bool}` | Field N, boolean | `!4b0` |
+
+### Historical Tile Request Example
+
+```
+https://kh.google.com/rt/tm/earth/NodeData/pb=!1m2!1s30434352427140517356!2u999!2e1!3u361!4b0!5i1036702
+```
+
+**Decoded:**
+- `!1s30434352427140517356` - Quadtree path (zoom ~20, no leading 0)
+- `!2u999` - Epoch (from quadtree traversal)
+- `!2e1` - Type = 1
+- `!3u361` - **Tile-specific epoch** (this is what varies by date!)
+- `!4b0` - Bool flag = false
+- `!5i1036702` - **Packed date** (2024-12-30)
+
+### Packed Date Decoding
+
+The `!5i` parameter contains the date as a packed integer:
+
+```
+packedDate = 1036702
+year  = packedDate >> 9        = 2024
+month = (packedDate >> 5) & 0xF = 12
+day   = packedDate & 0x1F       = 30
+Result: 2024-12-30
+```
+
+### Epoch Values from HAR Analysis
+
+From analyzing Google Earth Web HAR files, we discovered these working epochs:
+
+| Date (hexDate) | Decoded Date | Working Tile Epochs |
+|----------------|--------------|---------------------|
+| fd2be (1036990) | 2025-01-30 | 360 |
+| fd19e (1036702) | 2024-12-30 | 354, 361 |
+| fc99f (1034655) | 2020-12-31 | 273 |
+
+### NodeData Response
+
+NodeData responses are `application/x-protobuffer` and contain:
+- Tile imagery data (embedded)
+- Child node information
+- Epoch values for traversal
+
+Response sizes are typically 15-30KB for tiles with imagery.
+
+### BulkMetadata
+
+BulkMetadata provides epoch information for many tiles at once:
+
+```
+https://kh.google.com/rt/tm/earth/BulkMetadata/pb=!1m2!1s304343524271!2u999
+```
+
+Response sizes can be 100-500KB, containing epoch mappings for all child tiles in the region.
+
+### Comparison: Flatfile vs RT/Earth
+
+| Feature | Flatfile API | RT/Earth API |
+|---------|-------------|--------------|
+| Used by | Google Earth Pro Desktop | Google Earth Web |
+| Path format | With leading 0 (`020020213...`) | No leading 0 (`30434352...`) |
+| Date in URL | HexDate (`fd2be`) | PackedInt (`!5i1036702`) |
+| Encryption | XOR + zlib | None visible |
+| Epoch source | Quadtree traversal + fallback | URL parameter |
+| Response | Raw JPEG (after decrypt) | Embedded in protobuf |
 
 ---
 
