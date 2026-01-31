@@ -178,6 +178,9 @@ export const api = {
   onTaskQueueUpdate: (callback: (status: taskqueue.QueueStatus) => void) =>
     EventsOn("task-queue-update", callback),
 
+  onTaskListChanged: (callback: (tasks: any[]) => void) =>
+    EventsOn("task-list-changed", callback),
+
   onTaskProgress: (callback: (event: { taskId: string; progress: taskqueue.TaskProgress }) => void) =>
     EventsOn("task-progress", callback),
 

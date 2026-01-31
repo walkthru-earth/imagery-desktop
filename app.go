@@ -286,6 +286,10 @@ func (a *App) startup(ctx context.Context) {
 		func(status taskqueue.QueueStatus) {
 			wailsRuntime.EventsEmit(ctx, "task-queue-update", status)
 		},
+		func(tasks []*taskqueue.ExportTask) {
+			// Emit full task list for immediate UI updates
+			wailsRuntime.EventsEmit(ctx, "task-list-changed", tasks)
+		},
 		func(taskID string, progress taskqueue.TaskProgress) {
 			wailsRuntime.EventsEmit(ctx, "task-progress", map[string]interface{}{
 				"taskId":   taskID,

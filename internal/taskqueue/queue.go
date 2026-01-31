@@ -58,7 +58,8 @@ type QueueManager struct {
 	executor TaskExecutor
 
 	// Event emission callback
-	onQueueUpdate func(status QueueStatus)
+	onQueueUpdate  func(status QueueStatus)
+	onTasksChanged func(tasks []*ExportTask) // New: emit full task list on any change
 	onTaskProgress func(taskID string, progress TaskProgress)
 	onTaskComplete func(taskID string, success bool, err error)
 	onNotification func(title, message, notifType string)
@@ -107,11 +108,13 @@ func (qm *QueueManager) SetExecutor(executor TaskExecutor) {
 // SetCallbacks sets event callbacks
 func (qm *QueueManager) SetCallbacks(
 	onQueueUpdate func(QueueStatus),
+	onTasksChanged func([]*ExportTask),
 	onTaskProgress func(string, TaskProgress),
 	onTaskComplete func(string, bool, error),
 	onNotification func(string, string, string),
 ) {
 	qm.onQueueUpdate = onQueueUpdate
+	qm.onTasksChanged = onTasksChanged
 	qm.onTaskProgress = onTaskProgress
 	qm.onTaskComplete = onTaskComplete
 	qm.onNotification = onNotification
@@ -663,10 +666,13 @@ func (qm *QueueManager) worker() {
 	}
 }
 
-// emitQueueUpdate emits a queue update event
+// emitQueueUpdate emits queue update events (status + full task list)
 func (qm *QueueManager) emitQueueUpdate() {
 	if qm.onQueueUpdate != nil {
 		qm.onQueueUpdate(qm.GetStatus())
+	}
+	if qm.onTasksChanged != nil {
+		qm.onTasksChanged(qm.GetAllTasks())
 	}
 }
 

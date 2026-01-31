@@ -60,7 +60,18 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, refreshTrigger }: Ta
     // Subscribe to task queue events
     const unsubQueueUpdate = api.onTaskQueueUpdate((status: QueueStatus) => {
       setQueueStatus(status);
-      loadTasks(); // Reload tasks when queue status changes
+    });
+
+    // Subscribe to task list changes - direct update, no refetch needed
+    const unsubTaskListChanged = api.onTaskListChanged((tasks: any[]) => {
+      console.log("[TaskPanel] Received task-list-changed event:", tasks?.length, "tasks");
+      if (tasks) {
+        const convertedTasks: ExportTask[] = tasks.map((t: any) => ({
+          ...t,
+          status: t.status as ExportTask["status"],
+        }));
+        setTasks(convertedTasks);
+      }
     });
 
     const unsubTaskProgress = api.onTaskProgress(
