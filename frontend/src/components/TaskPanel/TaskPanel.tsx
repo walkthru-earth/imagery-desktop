@@ -123,11 +123,14 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask }: TaskPan
     console.log("[TaskPanel] Deleting task:", id);
     try {
       await api.deleteTask(id);
-      console.log("[TaskPanel] Task deleted successfully");
-      loadTasks();
+      console.log("[TaskPanel] Task deleted successfully, refreshing list...");
+      // Immediately remove from local state for instant feedback
+      setTasks(prevTasks => prevTasks.filter(t => t.id !== id));
+      // Then refresh from backend to ensure sync
+      await loadTasks();
+      console.log("[TaskPanel] Task list refreshed");
     } catch (error) {
       console.error("[TaskPanel] Failed to delete task:", error);
-      // Show error to user
       alert("Failed to delete task: " + error);
     }
   };
