@@ -497,7 +497,6 @@ function App() {
         <TaskPanel
           isOpen={isTaskPanelOpen}
           onToggle={() => setIsTaskPanelOpen(!isTaskPanelOpen)}
-          onAddTask={() => handleAddTask()}
           refreshTrigger={taskPanelRefreshTrigger}
         />
       </div>

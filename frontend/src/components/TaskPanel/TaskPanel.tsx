@@ -7,7 +7,6 @@ import {
   PanelRight,
   Trash2,
   RefreshCw,
-  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskList } from "./TaskList";
@@ -19,11 +18,10 @@ interface TaskPanelProps {
   isOpen: boolean;
   onToggle: () => void;
   onTaskSelect?: (task: ExportTask) => void;
-  onAddTask?: () => void;
   refreshTrigger?: number;
 }
 
-export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask, refreshTrigger }: TaskPanelProps) {
+export function TaskPanel({ isOpen, onToggle, onTaskSelect, refreshTrigger }: TaskPanelProps) {
   const [tasks, setTasks] = useState<ExportTask[]>([]);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -216,22 +214,7 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask, refreshTr
       </div>
 
       {/* Queue Controls */}
-      <div className="flex flex-col gap-2 p-4 border-b bg-muted/30">
-        {/* Add Task Button */}
-        {onAddTask && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onAddTask}
-            className="w-full"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add Task
-          </Button>
-        )}
-
-        {/* Play/Pause Controls */}
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 p-4 border-b bg-muted/30">
           {queueStatus?.isRunning && !queueStatus?.isPaused ? (
             <Button
               variant="outline"
@@ -262,7 +245,6 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask, refreshTr
           >
             <RefreshCw className="w-4 h-4" />
           </Button>
-        </div>
       </div>
 
       {/* Task List */}

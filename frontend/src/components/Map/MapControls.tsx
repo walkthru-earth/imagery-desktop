@@ -39,8 +39,26 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
 
   return (
     <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
-      <CardContent className="p-2 space-y-1">
-        {/* Source Selector and Export */}
+      <CardContent className="p-2 space-y-2">
+        {/* Add Task Button - Centered and prominent */}
+        {onAddTask && dates.length > 0 && (
+          <Button
+            size="default"
+            variant={isRangeMode ? "default" : "secondary"}
+            onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
+            title={isRangeMode ? "Add task for date range" : "Add task for current view"}
+            className="w-full"
+          >
+            <ListPlus className="h-5 w-5 mr-2" />
+            {isRangeMode ? (
+              <span>Add {Math.abs(rangeEnd - rangeStart) + 1} Dates to Queue</span>
+            ) : (
+              <span>Add to Queue</span>
+            )}
+          </Button>
+        )}
+
+        {/* Source Selector and Range Toggle */}
         <div className="flex gap-2 items-center">
           <SourceSelector
             value={mapState.source}
@@ -66,21 +84,6 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
           >
             <Calendar className="h-5 w-5" />
           </Button>
-          {onAddTask && dates.length > 0 && (
-            <Button
-              size="default"
-              variant="outline"
-              onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
-              title={isRangeMode ? "Add task for date range" : "Add task for current view"}
-            >
-              <ListPlus className="h-5 w-5" />
-              {isRangeMode && (
-                <span className="ml-1.5 text-sm font-medium">
-                  ({Math.abs(rangeEnd - rangeStart) + 1})
-                </span>
-              )}
-            </Button>
-          )}
         </div>
 
         {/* Date Slider */}
