@@ -23,7 +23,6 @@ import {
   SetDownloadPath,
   OpenDownloadFolder,
   OpenFolder,
-  StartTileServer,
   // Task Queue API
   AddExportTask,
   GetTaskQueue,
@@ -130,9 +129,7 @@ export const api = {
   openFolder: (path: string) =>
     OpenFolder(path),
 
-  // Tile Server
-  startTileServer: () =>
-    StartTileServer(),
+  // Tile Server starts automatically in backend startup()
 
   // Events
   onDownloadProgress: (callback: (progress: any) => void) =>

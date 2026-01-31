@@ -256,7 +256,7 @@ func (h *Handler) GetCurrentState(provider string) *RateLimitEvent {
 // buildMessage creates a user-friendly message
 func (h *Handler) buildMessage(provider string, statusCode int, retryAttempt int, nextRetryAt time.Time) string {
 	providerName := "Google Earth"
-	if provider == "esri_wayback" || provider == "esri" {
+	if provider == "esri_wayback" {
 		providerName = "Esri"
 	}
 

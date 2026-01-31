@@ -12,14 +12,11 @@ import (
 	"image/png"
 	"log"
 	"math"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,9 +32,11 @@ import (
 	"imagery-desktop/internal/config"
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
+	"imagery-desktop/internal/handlers/tileserver"
 	"imagery-desktop/internal/imagery"
 	"imagery-desktop/internal/ratelimit"
 	"imagery-desktop/internal/taskqueue"
+	"imagery-desktop/internal/utils/naming"
 	"imagery-desktop/internal/video"
 
 	_ "golang.org/x/image/tiff" // Register TIFF decoder for GeoTIFF loading
@@ -74,82 +73,6 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// generateQuadkey generates a quadkey string for a tile at zoom level z covering a bbox
-// Uses the center tile as reference
-func generateQuadkey(south, west, north, east float64, zoom int) string {
-	centerLat := (south + north) / 2
-	centerLon := (west + east) / 2
-
-	// Convert to tile coordinates (Web Mercator)
-	n := math.Pow(2, float64(zoom))
-	x := int((centerLon + 180.0) / 360.0 * n)
-	y := int((1.0 - math.Log(math.Tan(centerLat*math.Pi/180.0)+1.0/math.Cos(centerLat*math.Pi/180.0))/math.Pi) / 2.0 * n)
-
-	// Generate quadkey from x, y, z
-	var quadkey strings.Builder
-	for i := zoom; i > 0; i-- {
-		digit := 0
-		mask := 1 << (i - 1)
-		if (x & mask) != 0 {
-			digit++
-		}
-		if (y & mask) != 0 {
-			digit += 2
-		}
-		quadkey.WriteByte(byte('0' + digit))
-	}
-	return quadkey.String()
-}
-
-// generateBBoxString creates a human-readable bbox string for filenames
-func generateBBoxString(south, west, north, east float64) string {
-	return fmt.Sprintf("%.4f_%.4f_%.4f_%.4f", south, west, north, east)
-}
-
-// sanitizeCoordinate formats a coordinate for use in filenames (removes minus sign, uses N/S/E/W)
-// Replaces decimal point with 'p' for Windows compatibility
-func sanitizeCoordinate(coord float64, isLat bool) string {
-	dir := "E"
-	if isLat {
-		if coord < 0 {
-			dir = "S"
-		} else {
-			dir = "N"
-		}
-	} else {
-		if coord < 0 {
-			dir = "W"
-		} else {
-			dir = "E"
-		}
-	}
-	// Format and replace decimal point with 'p'
-	coordStr := fmt.Sprintf("%.4f", math.Abs(coord))
-	coordStr = strings.Replace(coordStr, ".", "p", 1)
-	return coordStr + dir
-}
-
-// generateGeoTIFFFilename creates a standardized GeoTIFF filename with metadata
-// Format: {source}_{date}_{quadkey}_z{zoom}_{bbox}.tif
-func generateGeoTIFFFilename(source, date string, bbox BoundingBox, zoom int) string {
-	quadkey := generateQuadkey(bbox.South, bbox.West, bbox.North, bbox.East, zoom)
-
-	// Short bbox representation for filename
-	bboxStr := fmt.Sprintf("%s-%s_%s-%s",
-		sanitizeCoordinate(bbox.South, true),
-		sanitizeCoordinate(bbox.North, true),
-		sanitizeCoordinate(bbox.West, false),
-		sanitizeCoordinate(bbox.East, false))
-
-	return fmt.Sprintf("%s_%s_%s_z%d_%s.tif", source, date, quadkey, zoom, bboxStr)
-}
-
-// generateTilesDirName creates a standardized tiles directory name
-// Format: {source}_{date}_z{zoom}_tiles
-func generateTilesDirName(source, date string, zoom int) string {
-	return fmt.Sprintf("%s_%s_z%d_tiles", source, date, zoom)
 }
 
 // BoundingBox represents a geographic bounding box
@@ -192,7 +115,7 @@ type App struct {
 	tileCache         *cache.PersistentTileCache // Changed to PersistentTileCache
 	downloader        *imagery.TileDownloader
 	downloadPath      string
-	tileServerURL     string
+	tileServer        *tileserver.Server // Tile server for serving decrypted Google Earth tiles
 	settings          *config.UserSettings
 	mu                sync.Mutex
 	devMode           bool // Enable verbose logging in dev mode only
@@ -319,8 +242,13 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
-	// Start local tile server
-	go a.StartTileServer()
+	// Initialize and start local tile server
+	a.tileServer = tileserver.NewServer(ctx, a.geClient, a.tileCache, a.devMode)
+	go func() {
+		if err := a.tileServer.Start(); err != nil {
+			wailsRuntime.LogError(ctx, fmt.Sprintf("Failed to start tile server: %v", err))
+		}
+	}()
 
 	// Set up task queue callbacks and executor
 	a.taskQueue.SetExecutor(a)
@@ -781,7 +709,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	// Create tiles directory if saving individual tiles (OGC structure: source_date_z{zoom}_tiles/{z}/{x}/{y}.jpg)
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(a.downloadPath, generateTilesDirName("esri", date, zoom))
+		tilesDir = filepath.Join(a.downloadPath, naming.GenerateTilesDirName("esri", date, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -881,7 +809,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		pixelHeight := (originY - endY) / float64(outputHeight)
 
 		// Save as GeoTIFF with embedded projection and rich metadata
-		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("esri", date, bbox, zoom))
+		tifPath := filepath.Join(a.downloadPath, naming.GenerateGeoTIFFFilename("esri", date, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		a.emitDownloadProgress(DownloadProgress{
@@ -1059,7 +987,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	timestamp := time.Now().Format("2006-01-02")
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(a.downloadPath, generateTilesDirName("ge", timestamp, zoom))
+		tilesDir = filepath.Join(a.downloadPath, naming.GenerateTilesDirName("ge", timestamp, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -1162,7 +1090,7 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 		pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 
 		// Save as GeoTIFF with embedded projection and rich metadata
-		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("ge", timestamp, bbox, zoom))
+		tifPath := filepath.Join(a.downloadPath, naming.GenerateGeoTIFFFilename("ge", timestamp, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		a.emitDownloadProgress(DownloadProgress{
@@ -1369,623 +1297,14 @@ func (a *App) GetEsriTileURL(date string) (string, error) {
 	return "", fmt.Errorf("no layer found for date: %s", date)
 }
 
-// corsMiddleware adds CORS headers to allow requests from Wails frontend
-// On macOS/Linux, Wails uses wails://wails origin which requires CORS headers
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow all origins (needed for wails://wails on macOS/Linux)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-		// Handle preflight OPTIONS request
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// StartTileServer starts a local HTTP server to serve decrypted Google Earth tiles
-func (a *App) StartTileServer() {
-	// Create a new mux to avoid global state conflicts
-	mux := http.NewServeMux()
-	mux.HandleFunc("/google-earth/", a.handleGoogleEarthTile)
-	mux.HandleFunc("/google-earth-historical/", a.handleGoogleEarthHistoricalTile)
-
-	// Listen on a random available port
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		wailsRuntime.LogError(a.ctx, fmt.Sprintf("Failed to start tile server: %v", err))
-		return
-	}
-
-	port := listener.Addr().(*net.TCPAddr).Port
-	a.tileServerURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	wailsRuntime.LogInfo(a.ctx, fmt.Sprintf("Tile server started on %s", a.tileServerURL))
-
-	// Wrap mux with CORS middleware
-	server := &http.Server{
-		Handler: corsMiddleware(mux),
-	}
-
-	if err := server.Serve(listener); err != nil {
-		wailsRuntime.LogError(a.ctx, fmt.Sprintf("Tile server stopped: %v", err))
-	}
-}
-
-// handleGoogleEarthTile handles requests for Google Earth tiles
-// URL format: /google-earth/{date}/{z}/{x}/{y}
-// date format: YYYY-MM-DD (must be exact date from GetGoogleEarthDatesForArea)
-// This handler reprojects GE tiles (Plate Carrée) to Web Mercator for MapLibre
-func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
-	// Parse path components
-	// Expected: /google-earth/date/z/x/y
-	path := r.URL.Path
-	if len(path) < 14 {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-
-	parts := strings.Split(path[14:], "/") // Remove /google-earth/ prefix
-	if len(parts) < 4 {
-		http.Error(w, "Invalid path format, expected /google-earth/{date}/{z}/{x}/{y}", http.StatusBadRequest)
-		return
-	}
-
-	dateStr := parts[0]
-	var z, x, y int
-
-	if _, err := fmt.Sscanf(parts[1], "%d", &z); err != nil {
-		http.Error(w, "Invalid zoom", http.StatusBadRequest)
-		return
-	}
-	if _, err := fmt.Sscanf(parts[2], "%d", &x); err != nil {
-		http.Error(w, "Invalid x", http.StatusBadRequest)
-		return
-	}
-	if _, err := fmt.Sscanf(parts[3], "%d", &y); err != nil {
-		http.Error(w, "Invalid y", http.StatusBadRequest)
-		return
-	}
-
-	// Get all GE tiles needed to cover this Web Mercator tile
-	// Try at the requested zoom level first, then fall back to lower zooms if tiles aren't available
-	geTiles := make(map[string]image.Image)
-	sourceZoom := z
-
-	// Get geographic bounds of the requested Web Mercator tile (fixed for all attempts)
-	south, west, north, east := googleearth.WebMercatorTileBounds(x, y, z)
-
-	// Try to fetch tiles, with fallback to lower zoom levels
-	for tryZoom := z; tryZoom >= 10 && len(geTiles) == 0; tryZoom-- {
-		// Find GE tiles at tryZoom that cover the same geographic area
-		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
-		if len(requiredTiles) == 0 {
-			continue
-		}
-
-		for _, tc := range requiredTiles {
-			tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
-			if err != nil {
-				continue
-			}
-
-			// Use date from URL for caching
-			var data []byte
-
-			// Check cache first
-			if a.tileCache != nil {
-				cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, dateStr)
-				if cachedData, found := a.tileCache.Get(cacheKey); found {
-					data = cachedData
-					if a.devMode {
-						log.Printf("[Cache HIT] Google Earth tile z=%d x=%d y=%d (date: %s)", tile.Level, tile.Column, tile.Row, dateStr)
-					}
-				}
-			}
-
-			// Fetch from source if not cached
-			if data == nil {
-				data, err = a.geClient.FetchTile(tile)
-				if err != nil {
-					continue
-				}
-
-				if a.devMode {
-					log.Printf("[Cache MISS] Google Earth tile z=%d x=%d y=%d (date: %s) - fetched from network", tile.Level, tile.Column, tile.Row, dateStr)
-				}
-
-				// Cache the result
-				if a.tileCache != nil {
-					a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, dateStr, data)
-				}
-			}
-
-			img, _, err := image.Decode(bytes.NewReader(data))
-			if err != nil {
-				continue
-			}
-
-			key := fmt.Sprintf("%d,%d", tc.Row, tc.Column)
-			geTiles[key] = img
-		}
-
-		if len(geTiles) > 0 {
-			sourceZoom = tryZoom
-			if tryZoom < z {
-				log.Printf("[GETile] z=%d x=%d y=%d: fell back to zoom %d", z, x, y, tryZoom)
-			}
-		}
-	}
-
-	if len(geTiles) == 0 {
-		log.Printf("[GETile] z=%d x=%d y=%d: no tiles available at any zoom level", z, x, y)
-		http.Error(w, "No tiles available", http.StatusNotFound)
-		return
-	}
-
-	// Reproject to Web Mercator (using source zoom for tile lookups)
-	output := googleearth.ReprojectToWebMercatorWithSourceZoom(geTiles, x, y, z, sourceZoom, TileSize)
-
-	// Encode as JPEG
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, output, &jpeg.Options{Quality: 90}); err != nil {
-		http.Error(w, "Failed to encode tile", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Write(buf.Bytes())
-}
-
-// fetchHistoricalGETileWithZoomFallback attempts to fetch a historical tile with automatic zoom fallback
-// If the tile doesn't exist at the requested zoom, it tries lower zoom levels (z-1, z-2, etc.)
-// When using a lower zoom tile, it extracts and upscales the correct portion to match the original tile
-// Returns the tile data and the zoom level that succeeded, or error if all attempts fail
-func (a *App) fetchHistoricalGETileWithZoomFallback(tile *googleearth.Tile, date, hexDate string, maxFallbackLevels int) ([]byte, int, error) {
-	// Try the requested zoom first
-	data, err := a.fetchHistoricalGETile(tile, date, hexDate)
-	if err == nil {
-		return data, tile.Level, nil
-	}
-
-	// Log the initial failure
-	log.Printf("[ZoomFallback] Tile %s at zoom %d failed, trying fallback...", tile.Path, tile.Level)
-
-	originalRow := tile.Row
-	originalCol := tile.Column
-	originalZoom := tile.Level
-
-	// Try lower zoom levels
-	for fallbackLevel := 1; fallbackLevel <= maxFallbackLevels; fallbackLevel++ {
-		lowerZoom := tile.Level - fallbackLevel
-		if lowerZoom < 10 {
-			break // Don't go below zoom 10
-		}
-
-		// Create a tile at the lower zoom level covering the same geographic area
-		// Get the center of the original tile
-		lat, lon := tile.Center()
-		lowerTile, err := googleearth.GetTileForCoord(lat, lon, lowerZoom)
-		if err != nil {
-			continue
-		}
-
-		log.Printf("[ZoomFallback] Trying zoom %d (tile: %s)...", lowerZoom, lowerTile.Path)
-		data, err := a.fetchHistoricalGETile(lowerTile, date, hexDate)
-		if err == nil {
-			log.Printf("[ZoomFallback] SUCCESS at zoom %d, extracting quadrant for original tile", lowerZoom)
-
-			// Extract and upscale the correct portion of the lower zoom tile
-			// to match the original requested tile
-			croppedData, err := a.extractQuadrantFromFallbackTile(data, originalRow, originalCol, originalZoom, lowerTile.Row, lowerTile.Column, lowerZoom)
-			if err != nil {
-				log.Printf("[ZoomFallback] Failed to extract quadrant: %v, returning full tile", err)
-				return data, lowerZoom, nil
-			}
-
-			return croppedData, originalZoom, nil // Return originalZoom since we've upscaled to match
-		}
-	}
-
-	return nil, 0, fmt.Errorf("tile not available at zoom %d or any fallback levels", tile.Level)
-}
-
-// extractQuadrantFromFallbackTile extracts and upscales the portion of a lower-zoom tile
-// that corresponds to a higher-zoom tile position
-func (a *App) extractQuadrantFromFallbackTile(data []byte, origRow, origCol, origZoom, fallbackRow, fallbackCol, fallbackZoom int) ([]byte, error) {
-	// Decode the source image
-	srcImg, err := jpeg.Decode(bytes.NewReader(data))
-	if err != nil {
-		// Try other formats
-		srcImg, _, err = image.Decode(bytes.NewReader(data))
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode fallback tile: %w", err)
-		}
-	}
-
-	srcBounds := srcImg.Bounds()
-	srcWidth := srcBounds.Dx()
-	srcHeight := srcBounds.Dy()
-
-	// Calculate the scale factor (how many higher-zoom tiles fit in one lower-zoom tile)
-	zoomDiff := origZoom - fallbackZoom
-	scale := 1 << zoomDiff // 2^zoomDiff (e.g., 2 for 1 level diff, 4 for 2 levels diff)
-
-	// Calculate the position of the original tile within the fallback tile
-	// The original tile's position relative to the fallback tile
-	relRow := origRow - (fallbackRow * scale)
-	relCol := origCol - (fallbackCol * scale)
-
-	// Calculate the source rectangle to extract
-	quadrantWidth := srcWidth / scale
-	quadrantHeight := srcHeight / scale
-	srcX := relCol * quadrantWidth
-	srcY := relRow * quadrantHeight
-
-	log.Printf("[ZoomFallback] Extracting quadrant: zoomDiff=%d, scale=%d, rel(%d,%d), src(%d,%d), size(%d,%d)",
-		zoomDiff, scale, relCol, relRow, srcX, srcY, quadrantWidth, quadrantHeight)
-
-	// Create output image (256x256 like a normal tile)
-	tileSize := 256
-	dstImg := image.NewRGBA(image.Rect(0, 0, tileSize, tileSize))
-
-	// Scale factor for upsampling
-	scaleX := float64(tileSize) / float64(quadrantWidth)
-	scaleY := float64(tileSize) / float64(quadrantHeight)
-
-	// Nearest-neighbor upscaling (fast and works well for satellite imagery)
-	for dstY := 0; dstY < tileSize; dstY++ {
-		for dstX := 0; dstX < tileSize; dstX++ {
-			// Map destination coordinates to source coordinates
-			srcPosX := srcX + int(float64(dstX)/scaleX)
-			srcPosY := srcY + int(float64(dstY)/scaleY)
-
-			// Clamp to valid range
-			if srcPosX >= srcBounds.Max.X {
-				srcPosX = srcBounds.Max.X - 1
-			}
-			if srcPosY >= srcBounds.Max.Y {
-				srcPosY = srcBounds.Max.Y - 1
-			}
-			if srcPosX < srcBounds.Min.X {
-				srcPosX = srcBounds.Min.X
-			}
-			if srcPosY < srcBounds.Min.Y {
-				srcPosY = srcBounds.Min.Y
-			}
-
-			dstImg.Set(dstX, dstY, srcImg.At(srcPosX, srcPosY))
-		}
-	}
-
-	// Encode back to JPEG
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, dstImg, &jpeg.Options{Quality: 90}); err != nil {
-		return nil, fmt.Errorf("failed to encode extracted quadrant: %w", err)
-	}
-
-	return buf.Bytes(), nil
-}
-
-// fetchHistoricalGETile fetches a historical tile for the given GE tile coordinates and hexDate
-// It handles epoch lookup and fallback to nearest date
-// date: human-readable date (YYYY-MM-DD) for cache storage
-// hexDate: hex date for Google API tile fetching
-func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string) ([]byte, error) {
-	// Check cache first
-	if a.tileCache != nil {
-		cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date)
-		if cachedData, found := a.tileCache.Get(cacheKey); found {
-			if a.devMode {
-				log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, date)
-			}
-			return cachedData, nil
-		}
-	}
-
-	// Get available dates for this specific tile to find the correct epoch
-	dates, err := a.geClient.GetAvailableDates(tile)
-	if err != nil {
-		return nil, fmt.Errorf("GetAvailableDates failed: %w", err)
-	}
-
-	if len(dates) == 0 {
-		return nil, fmt.Errorf("no dates available for tile")
-	}
-
-	// Find the epoch for the requested hexDate
-	var epoch int
-	var foundHexDate string
-	found := false
-	for _, dt := range dates {
-		if dt.HexDate == hexDate {
-			epoch = dt.Epoch
-			foundHexDate = hexDate
-			found = true
-			break
-		}
-	}
-
-	// If exact date not found, find the nearest date
-	if !found {
-		closestIdx := 0
-		closestDiff := int64(^uint64(0) >> 1) // Max int64
-		requestedVal, _ := strconv.ParseInt(hexDate, 16, 64)
-
-		for i, dt := range dates {
-			dtVal, _ := strconv.ParseInt(dt.HexDate, 16, 64)
-			diff := requestedVal - dtVal
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff < closestDiff {
-				closestDiff = diff
-				closestIdx = i
-			}
-		}
-
-		epoch = dates[closestIdx].Epoch
-		foundHexDate = dates[closestIdx].HexDate
-		if a.devMode {
-			log.Printf("[fetchHistoricalGETile] Using nearest date: %s (requested: %s)", foundHexDate, hexDate)
-		}
-	}
-
-	// Try fetching with the protobuf-reported epoch first
-	data, err := a.geClient.FetchHistoricalTile(tile, epoch, foundHexDate)
-	if err == nil {
-		// Cache the result using human-readable date for OGC compliance
-		if a.tileCache != nil {
-			a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
-		}
-		return data, nil
-	}
-
-	// If the primary epoch fails (404), try with older epochs from the same tile
-	// This mimics Google Earth Pro's behavior which uses older, stable epochs
-
-	// Collect unique epochs from all dates, sorted by frequency (most common first)
-	epochCounts := make(map[int]int)
-	for _, dt := range dates {
-		epochCounts[dt.Epoch]++
-	}
-
-	// Sort epochs by frequency (descending)
-	type epochFreq struct {
-		epoch int
-		count int
-	}
-	var epochList []epochFreq
-	for ep, cnt := range epochCounts {
-		if ep != epoch { // Skip the one we already tried
-			epochList = append(epochList, epochFreq{ep, cnt})
-		}
-	}
-	sort.Slice(epochList, func(i, j int) bool {
-		return epochList[i].count > epochList[j].count
-	})
-
-	// Try epochs in order of frequency (most common = most likely to have tiles)
-	for _, ef := range epochList {
-		data, err := a.geClient.FetchHistoricalTile(tile, ef.epoch, foundHexDate)
-		if err == nil {
-			// Cache the result using human-readable date for OGC compliance
-			if a.tileCache != nil {
-				a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
-			}
-			return data, nil
-		}
-	}
-
-	// Last resort: Try known-good epochs for 2025+ dates
-	// These epochs may not be in the protobuf but are known to work from testing
-	knownGoodEpochs := []int{358, 357, 356, 354, 352}
-	for _, knownEpoch := range knownGoodEpochs {
-		// Skip if already tried
-		if knownEpoch == epoch {
-			continue
-		}
-		alreadyTried := false
-		for _, ef := range epochList {
-			if ef.epoch == knownEpoch {
-				alreadyTried = true
-				break
-			}
-		}
-		if alreadyTried {
-			continue
-		}
-
-		log.Printf("[DEBUG fetchHistoricalGETile] Trying known-good epoch %d...", knownEpoch)
-		data, err := a.geClient.FetchHistoricalTile(tile, knownEpoch, foundHexDate)
-		if err == nil {
-			// Cache the result using human-readable date for OGC compliance
-			if a.tileCache != nil {
-				a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
-			}
-			return data, nil
-		}
-	}
-
-	return nil, fmt.Errorf("tile not available with any known epoch (tried %d epochs)", len(epochList)+1+len(knownGoodEpochs))
-}
-
-// handleGoogleEarthHistoricalTile handles requests for historical Google Earth tiles
-// URL format: /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
-// date format: YYYY-MM-DD (for human-readable cache), hexDate: hex string (for tile fetching)
-// This handler reprojects GE tiles (Plate Carrée) to Web Mercator for MapLibre
-func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Request) {
-	// Parse path components
-	// Expected: /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
-	path := r.URL.Path
-	prefix := "/google-earth-historical/"
-	if !strings.HasPrefix(path, prefix) {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-
-	parts := strings.Split(path[len(prefix):], "/")
-	if len(parts) < 4 {
-		http.Error(w, "Invalid path format, expected /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}", http.StatusBadRequest)
-		return
-	}
-
-	// Split date_hexDate into date and hexDate
-	dateHexParts := strings.Split(parts[0], "_")
-	if len(dateHexParts) != 2 {
-		http.Error(w, "Invalid date format, expected {date}_{hexDate}", http.StatusBadRequest)
-		return
-	}
-
-	date := dateHexParts[0]      // Human-readable date (YYYY-MM-DD)
-	hexDate := dateHexParts[1]   // Hex date for tile fetching
-	var z, x, y int
-
-	if _, err := fmt.Sscanf(parts[1], "%d", &z); err != nil {
-		http.Error(w, "Invalid zoom", http.StatusBadRequest)
-		return
-	}
-	if _, err := fmt.Sscanf(parts[2], "%d", &x); err != nil {
-		http.Error(w, "Invalid x", http.StatusBadRequest)
-		return
-	}
-	if _, err := fmt.Sscanf(parts[3], "%d", &y); err != nil {
-		http.Error(w, "Invalid y", http.StatusBadRequest)
-		return
-	}
-
-	// Try to fetch historical tiles with smart zoom fallback
-	// Strategy: Try harder at requested zoom before falling back (epoch fallback happens per tile)
-	geTiles := make(map[string]image.Image)
-	sourceZoom := z
-
-	// Get geographic bounds of the requested Web Mercator tile (fixed for all attempts)
-	south, west, north, east := googleearth.WebMercatorTileBounds(x, y, z)
-
-	// Smart fallback: only try z, z-1, z-2, z-3 (instead of all the way to 10)
-	// High zoom tiles (17-19) usually exist with the right epoch (358 for 2025+)
-	// fetchHistoricalGETile already has three-layer epoch fallback, so give it a chance
-	maxFallback := 3
-	if z <= 16 {
-		maxFallback = 6 // More aggressive fallback for lower zooms where coverage is sparser
-	}
-
-	for tryZoom := z; tryZoom >= max(z-maxFallback, 10) && len(geTiles) == 0; tryZoom-- {
-		// Find GE tiles at tryZoom that cover the same geographic area
-		requiredTiles := googleearth.GetGETilesForBounds(south, west, north, east, tryZoom)
-
-		log.Printf("[GEHistorical] z=%d x=%d y=%d: trying zoom %d, need %d tiles", z, x, y, tryZoom, len(requiredTiles))
-
-		successCount := 0
-		for _, tc := range requiredTiles {
-			tile, err := googleearth.NewTileFromRowCol(tc.Row, tc.Column, tc.Level)
-			if err != nil {
-				log.Printf("[GEHistorical] Failed to create tile from row=%d col=%d level=%d: %v", tc.Row, tc.Column, tc.Level, err)
-				continue
-			}
-
-			// Try cache first
-			var data []byte
-
-			if a.tileCache != nil {
-				// Build cache key using human-readable date for organized cache structure
-				cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date)
-				if cachedData, found := a.tileCache.Get(cacheKey); found {
-					data = cachedData
-					successCount++
-				}
-			}
-
-			// Fetch from source if not cached (with full epoch fallback)
-			if data == nil {
-				data, err = a.fetchHistoricalGETile(tile, date, hexDate)
-				if err != nil {
-					log.Printf("[GEHistorical] Tile %s at zoom %d failed: %v", tile.Path, tryZoom, err)
-					continue
-				}
-
-				// Cache the successful result using OGC ZXY structure with human-readable date
-				if a.tileCache != nil {
-					a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
-				}
-				successCount++
-			}
-
-			img, _, err := image.Decode(bytes.NewReader(data))
-			if err != nil {
-				log.Printf("[GEHistorical] Failed to decode tile %s: %v", tile.Path, err)
-				continue
-			}
-
-			key := fmt.Sprintf("%d,%d", tc.Row, tc.Column)
-			geTiles[key] = img
-		}
-
-		log.Printf("[GEHistorical] z=%d x=%d y=%d: zoom %d got %d/%d tiles", z, x, y, tryZoom, len(geTiles), len(requiredTiles))
-
-		if len(geTiles) > 0 {
-			sourceZoom = tryZoom
-			if tryZoom < z {
-				log.Printf("[GEHistorical] z=%d x=%d y=%d hexDate=%s: fell back to zoom %d (got %d/%d tiles)",
-					z, x, y, hexDate, tryZoom, len(geTiles), len(requiredTiles))
-			}
-			// Early exit - we got tiles, stop trying lower zooms
-			break
-		}
-	}
-
-	if len(geTiles) == 0 {
-		a.serveTransparentTile(w)
-		return
-	}
-
-	// Reproject to Web Mercator (using source zoom for tile lookups)
-	output := googleearth.ReprojectToWebMercatorWithSourceZoom(geTiles, x, y, z, sourceZoom, TileSize)
-
-	// Encode as JPEG
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, output, &jpeg.Options{Quality: 90}); err != nil {
-		http.Error(w, "Failed to encode tile", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "max-age=86400") // Cache for 24 hours
-	w.Write(buf.Bytes())
-}
-
-// serveTransparentTile serves a 256x256 transparent PNG tile for missing data
-func (a *App) serveTransparentTile(w http.ResponseWriter) {
-	// 1x1 transparent PNG, scaled by MapLibre to 256x256
-	// This is a minimal valid PNG with transparency
-	transparentPNG := []byte{
-		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
-		0x01, 0x03, 0x00, 0x00, 0x00, 0x66, 0xbc, 0x3a, 0x25, 0x00, 0x00, 0x00,
-		0x03, 0x50, 0x4c, 0x54, 0x45, 0x00, 0x00, 0x00, 0xa7, 0x7a, 0x3d, 0xda,
-		0x00, 0x00, 0x00, 0x01, 0x74, 0x52, 0x4e, 0x53, 0x00, 0x40, 0xe6, 0xd8,
-		0x66, 0x00, 0x00, 0x00, 0x1f, 0x49, 0x44, 0x41, 0x54, 0x68, 0xde, 0xed,
-		0xc1, 0x01, 0x0d, 0x00, 0x00, 0x00, 0xc2, 0xa0, 0xf7, 0x4f, 0x6d, 0x0e,
-		0x37, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbe, 0x0d,
-		0x21, 0x00, 0x00, 0x01, 0x9a, 0x60, 0xe1, 0xd5, 0x00, 0x00, 0x00, 0x00,
-		0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-	}
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "max-age=3600") // Cache for 1 hour
-	w.Write(transparentPNG)
-}
 
 // GetGoogleEarthTileURL returns the tile URL template for Google Earth (for map preview)
 func (a *App) GetGoogleEarthTileURL(date string) (string, error) {
-	if a.tileServerURL == "" {
+	if a.tileServer == nil || a.tileServer.GetTileServerURL() == "" {
 		return "", fmt.Errorf("tile server not started")
 	}
 	// Date must be in YYYY-MM-DD format
-	return fmt.Sprintf("%s/google-earth/%s/{z}/{x}/{y}", a.tileServerURL, date), nil
+	return fmt.Sprintf("%s/google-earth/%s/{z}/{x}/{y}", a.tileServer.GetTileServerURL(), date), nil
 }
 
 // GEAvailableDate represents an available Google Earth historical imagery date
@@ -2153,7 +1472,7 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 // GetGoogleEarthHistoricalTileURL returns the tile URL template for historical Google Earth imagery
 // Note: epoch is no longer used in URL - it's looked up per-tile for accuracy
 func (a *App) GetGoogleEarthHistoricalTileURL(date string, hexDate string, epoch int) (string, error) {
-	if a.tileServerURL == "" {
+	if a.tileServer == nil || a.tileServer.GetTileServerURL() == "" {
 		return "", fmt.Errorf("tile server not started")
 	}
 	// Note: epoch parameter kept for API compatibility but not used in URL
@@ -2161,7 +1480,7 @@ func (a *App) GetGoogleEarthHistoricalTileURL(date string, hexDate string, epoch
 	// Use regular date format (YYYY-MM-DD) in URL for human-readable cache structure
 	// Format: /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
 	// This allows the handler to extract both date (for caching) and hexDate (for fetching)
-	return fmt.Sprintf("%s/google-earth-historical/%s_%s/{z}/{x}/{y}", a.tileServerURL, date, hexDate), nil
+	return fmt.Sprintf("%s/google-earth-historical/%s_%s/{z}/{x}/{y}", a.tileServer.GetTileServerURL(), date, hexDate), nil
 }
 
 // DownloadGoogleEarthHistoricalImagery downloads historical Google Earth imagery for a bounding box
@@ -2208,7 +1527,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 	// Create tiles directory if saving individual tiles (OGC structure)
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(a.downloadPath, generateTilesDirName("ge_historical", dateStr, zoom))
+		tilesDir = filepath.Join(a.downloadPath, naming.GenerateTilesDirName("ge_historical", dateStr, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -2243,7 +1562,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 					maxFallback = 6
 				}
 
-				data, actualZoom, err := a.fetchHistoricalGETileWithZoomFallback(job.tile, dateStr, hexDate, maxFallback)
+				data, actualZoom, err := a.tileServer.FetchHistoricalGETileWithZoomFallback(job.tile, dateStr, hexDate, maxFallback)
 				if err != nil {
 					log.Printf("[GEHistorical] Failed to download tile %s (tried zoom %d to %d): %v",
 						job.tile.Path, zoom, max(zoom-maxFallback, 10), err)
@@ -2368,7 +1687,7 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 		pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 
 		// Save as GeoTIFF with embedded projection and rich metadata
-		tifPath := filepath.Join(a.downloadPath, generateGeoTIFFFilename("ge_historical", dateStr, bbox, zoom))
+		tifPath := filepath.Join(a.downloadPath, naming.GenerateGeoTIFFFilename("ge_historical", dateStr, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		a.emitDownloadProgress(DownloadProgress{
@@ -2627,10 +1946,10 @@ func (a *App) exportTimelapseVideoInternal(bbox BoundingBox, zoom int, dates []G
 		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
 		// Convert source to match download naming convention
 		downloadSource := source
-		if source == common.ProviderGoogleEarth || source == "google" || source == "ge" {
+		if source == common.ProviderGoogleEarth {
 			downloadSource = "ge_historical"
 		}
-		filename := generateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox, zoom)
+		filename := naming.GenerateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox.South, bbox.West, bbox.North, bbox.East, zoom)
 		basePath := filepath.Join(downloadDir, filename)
 
 		// Try loading PNG first (created as sidecar for better compatibility)
@@ -3213,7 +2532,7 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 	// For Esri: deduplicate by checking center tile hash
 	var esriSeenHashes map[string]string
 	var esriCenterTile *esri.EsriTile
-	if task.Source == common.ProviderEsriWayback || task.Source == "esri" {
+	if task.Source == common.ProviderEsriWayback {
 		esriSeenHashes = make(map[string]string)
 		centerLat := (bbox.South + bbox.North) / 2
 		centerLon := (bbox.West + bbox.East) / 2
@@ -3238,12 +2557,12 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		// Download imagery based on source
 		var err error
 		switch task.Source {
-		case common.ProviderGoogleEarth, "google", "ge":
+		case common.ProviderGoogleEarth:
 			err = a.DownloadGoogleEarthHistoricalImagery(bbox, task.Zoom, dateInfo.HexDate, dateInfo.Epoch, dateInfo.Date, task.Format)
 			if err == nil {
 				downloadedCount++
 			}
-		case common.ProviderEsriWayback, "esri":
+		case common.ProviderEsriWayback:
 			// Deduplicate Esri downloads by checking center tile hash
 			// Also detect blank tiles (no coverage at this zoom level)
 			shouldDownload := true

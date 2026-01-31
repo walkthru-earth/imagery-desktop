@@ -132,10 +132,7 @@ function App() {
       maplibregl.setRTLTextPlugin(RTL_PLUGIN_URL, true);
     }
 
-    // Start tile server
-    api.startTileServer().catch((error) => {
-      console.error("Failed to start tile server:", error);
-    });
+    // Tile server starts automatically in backend startup()
   }, []);
 
   // ===================
