@@ -1704,7 +1704,9 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 	if a.tileCache != nil {
 		cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, hexDate)
 		if cachedData, found := a.tileCache.Get(cacheKey); found {
-			log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, hexDate)
+			if a.devMode {
+				log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, hexDate)
+			}
 			return cachedData, nil
 		}
 	}
@@ -1719,16 +1721,6 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		return nil, fmt.Errorf("no dates available for tile")
 	}
 
-	// DEBUG: Log all available dates and their epochs for this tile
-	log.Printf("[DEBUG fetchHistoricalGETile] Tile %s has %d dates:", tile.Path, len(dates))
-	for i, dt := range dates {
-		if i < 5 { // Log first 5
-			log.Printf("[DEBUG fetchHistoricalGETile]   Date %s (hex: %s) -> epoch %d",
-				dt.Date.Format("2006-01-02"), dt.HexDate, dt.Epoch)
-		}
-	}
-	log.Printf("[DEBUG fetchHistoricalGETile] Looking for hexDate: %s", hexDate)
-
 	// Find the epoch for the requested hexDate
 	var epoch int
 	var foundHexDate string
@@ -1738,7 +1730,6 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 			epoch = dt.Epoch
 			foundHexDate = hexDate
 			found = true
-			log.Printf("[DEBUG fetchHistoricalGETile] EXACT MATCH found: hexDate %s -> epoch %d", hexDate, epoch)
 			break
 		}
 	}
@@ -1763,25 +1754,23 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 
 		epoch = dates[closestIdx].Epoch
 		foundHexDate = dates[closestIdx].HexDate
-		log.Printf("[DEBUG fetchHistoricalGETile] NO EXACT MATCH - using nearest: hexDate %s -> epoch %d (requested was %s)",
-			foundHexDate, epoch, hexDate)
+		if a.devMode {
+			log.Printf("[fetchHistoricalGETile] Using nearest date: %s (requested: %s)", foundHexDate, hexDate)
+		}
 	}
 
 	// Try fetching with the protobuf-reported epoch first
-	log.Printf("[DEBUG fetchHistoricalGETile] Attempting fetch: tile %s, epoch %d, hexDate %s", tile.Path, epoch, foundHexDate)
 	data, err := a.geClient.FetchHistoricalTile(tile, epoch, foundHexDate)
 	if err == nil {
-		log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS on first attempt with epoch %d", epoch)
-		// Cache the result
+		// Cache the result using foundHexDate (the actual date we fetched)
 		if a.tileCache != nil {
-			a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+			a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, foundHexDate, data)
 		}
 		return data, nil
 	}
 
 	// If the primary epoch fails (404), try with older epochs from the same tile
 	// This mimics Google Earth Pro's behavior which uses older, stable epochs
-	log.Printf("[DEBUG fetchHistoricalGETile] Primary epoch %d failed, trying fallback epochs...", epoch)
 
 	// Collect unique epochs from all dates, sorted by frequency (most common first)
 	epochCounts := make(map[int]int)
@@ -1806,23 +1795,19 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 
 	// Try epochs in order of frequency (most common = most likely to have tiles)
 	for _, ef := range epochList {
-		log.Printf("[DEBUG fetchHistoricalGETile] Trying fallback epoch %d (used by %d dates)...", ef.epoch, ef.count)
 		data, err := a.geClient.FetchHistoricalTile(tile, ef.epoch, foundHexDate)
 		if err == nil {
-			log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS with fallback epoch %d", ef.epoch)
-			// Cache the result
+			// Cache the result using foundHexDate (the actual date we fetched)
 			if a.tileCache != nil {
-				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, foundHexDate, data)
 			}
 			return data, nil
 		}
-		log.Printf("[DEBUG fetchHistoricalGETile] Fallback epoch %d also failed", ef.epoch)
 	}
 
 	// Last resort: Try known-good epochs for 2025+ dates
 	// These epochs may not be in the protobuf but are known to work from testing
 	knownGoodEpochs := []int{358, 357, 356, 354, 352}
-	log.Printf("[DEBUG fetchHistoricalGETile] Trying known-good epochs for recent dates: %v", knownGoodEpochs)
 	for _, knownEpoch := range knownGoodEpochs {
 		// Skip if already tried
 		if knownEpoch == epoch {
@@ -1842,16 +1827,14 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		log.Printf("[DEBUG fetchHistoricalGETile] Trying known-good epoch %d...", knownEpoch)
 		data, err := a.geClient.FetchHistoricalTile(tile, knownEpoch, foundHexDate)
 		if err == nil {
-			log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS with known-good epoch %d", knownEpoch)
-			// Cache the result
+			// Cache the result using foundHexDate (the actual date we fetched)
 			if a.tileCache != nil {
-				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, foundHexDate, data)
 			}
 			return data, nil
 		}
 	}
 
-	// All epochs failed
 	return nil, fmt.Errorf("tile not available with any known epoch (tried %d epochs)", len(epochList)+1+len(knownGoodEpochs))
 }
 

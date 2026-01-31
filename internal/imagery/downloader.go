@@ -15,11 +15,11 @@ import (
 // TileDownloader provides unified tile download and stitching logic
 type TileDownloader struct {
 	workers int
-	cache   *cache.TileCache
+	cache   *cache.PersistentTileCache
 }
 
 // NewTileDownloader creates a new tile downloader
-func NewTileDownloader(workers int, cache *cache.TileCache) *TileDownloader {
+func NewTileDownloader(workers int, cache *cache.PersistentTileCache) *TileDownloader {
 	return &TileDownloader{
 		workers: workers,
 		cache:   cache,
@@ -81,33 +81,16 @@ func (d *TileDownloader) DownloadAndStitch(
 		go func() {
 			defer wg.Done()
 			for tile := range tileChan {
-				// Try cache first
-				cacheKey := fetcher.GetCacheKey(tile)
-				var data []byte
-				var err error
-
-				if d.cache != nil {
-					if cachedData, found := d.cache.Get(cacheKey); found {
-						data = cachedData
+				// Fetch tile data
+				// Note: Caching is handled in app.go at a higher level
+				data, err := fetcher.FetchTile(tile)
+				if err != nil {
+					resultChan <- tileResult{tile: tile, success: false}
+					atomic.AddInt64(&downloaded, 1)
+					if onProgress != nil {
+						onProgress(int(atomic.LoadInt64(&downloaded)), total)
 					}
-				}
-
-				// Fetch from source if not in cache
-				if data == nil {
-					data, err = fetcher.FetchTile(tile)
-					if err != nil {
-						resultChan <- tileResult{tile: tile, success: false}
-						atomic.AddInt64(&downloaded, 1)
-						if onProgress != nil {
-							onProgress(int(atomic.LoadInt64(&downloaded)), total)
-						}
-						continue
-					}
-
-					// Cache the result
-					if d.cache != nil {
-						d.cache.Set(cacheKey, data)
-					}
+					continue
 				}
 
 				resultChan <- tileResult{tile: tile, data: data, success: true}
