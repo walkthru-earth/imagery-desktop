@@ -70,6 +70,8 @@ graph TB
 **Key Architecture Updates:**
 - **Modular Design**: Core logic refactored from monolithic `app.go` (3,395 lines) to organized packages (~1,500 lines)
 - **Unified Tile Server**: Both Google Earth and Esri tiles now route through backend server with caching
+- **Task Export Isolation**: Each export task saves to dedicated subdirectory with proper path management
+- **Video Export Manager**: Dedicated manager with dependency injection for maintainable video processing
 - **Security**: Path traversal protection, coordinate validation, and zoom level enforcement
 - **Performance**: Semaphore-based concurrency control for optimal resource usage
 
@@ -323,20 +325,22 @@ The frontend dev server runs on http://localhost:5173 with Vite's fast HMR.
 ├── internal/
 │   ├── cache/                # Persistent tile cache
 │   ├── config/               # User settings management
-│   ├── downloads/            # Download orchestration (NEW)
+│   ├── downloads/            # Download orchestration
 │   │   ├── common.go         # Shared types, validation, security
-│   │   ├── esri/             # Esri download logic
-│   │   └── googleearth/      # Google Earth download logic
+│   │   ├── esri/             # Esri downloader with dynamic path management
+│   │   └── googleearth/      # Google Earth downloader with dynamic path management
 │   ├── esri/                 # Esri Wayback API client
 │   ├── googleearth/          # Google Earth API client
-│   ├── handlers/             # HTTP handlers (NEW)
-│   │   └── tileserver/       # Tile server for both providers
+│   ├── handlers/             # HTTP handlers
+│   │   └── tileserver/       # Unified tile server for both providers
 │   ├── imagery/              # Image download orchestration
 │   ├── ratelimit/            # Rate limit detection & retry
 │   ├── taskqueue/            # Background task management
-│   ├── utils/                # Utilities (NEW)
+│   ├── utils/                # Utilities
 │   │   └── naming/           # Filename and coordinate utilities
-│   ├── video/                # Video export (FFmpeg)
+│   ├── video/                # Video export orchestration
+│   │   ├── export.go         # Core video encoding (FFmpeg)
+│   │   └── manager.go        # High-level video export manager with DI
 │   └── wmts/                 # WMTS capabilities parser
 ├── pkg/
 │   └── geotiff/              # GeoTIFF encoding
@@ -346,9 +350,11 @@ The frontend dev server runs on http://localhost:5173 with Vite's fast HMR.
 **Recent Refactoring:**
 - `app.go` reduced from 3,395 to ~1,500 lines through modularization
 - Download logic extracted to `internal/downloads/` with provider-specific packages
+- Video export logic moved to `internal/video/manager.go` with dependency injection pattern
 - Tile serving consolidated in `internal/handlers/tileserver/`
 - Common utilities moved to `internal/utils/naming/`
-- See [MODULARIZATION_COMPLETE.md](MODULARIZATION_COMPLETE.md) for detailed refactoring summary
+- Task export path management: downloaders now support dynamic path updates
+- See [docs/MODULARIZATION_COMPLETE.md](docs/MODULARIZATION_COMPLETE.md) for detailed refactoring summary
 
 ---
 
