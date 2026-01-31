@@ -278,10 +278,13 @@ func (m *Manager) exportTimelapseInternal(bbox BoundingBox, zoom int, dates []Da
 		m.emitProgress(i, len(dates), (i*100)/len(dates), fmt.Sprintf("Loading frame %d/%d: %s", i+1, len(dates), dateInfo.Date))
 
 		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
-		// Convert source to match download naming convention
+		// Convert provider constants to download filename prefixes
 		downloadSource := source
-		if source == common.ProviderGoogleEarth {
+		switch source {
+		case common.ProviderGoogleEarth:
 			downloadSource = "ge_historical"
+		case common.ProviderEsriWayback:
+			downloadSource = "esri"
 		}
 		filename := naming.GenerateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox.South, bbox.West, bbox.North, bbox.East, zoom)
 		basePath := filepath.Join(downloadDir, filename)
