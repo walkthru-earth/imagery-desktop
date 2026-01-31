@@ -1,7 +1,7 @@
 # Imagery Desktop - Complete Architecture Documentation
 
-**Version:** 1.0
-**Last Updated:** 2026-01-30
+**Version:** 1.1
+**Last Updated:** 2026-01-31
 **Status:** Production Ready
 
 ---
@@ -38,6 +38,11 @@
 - ✅ Sophisticated epoch fallback for high zoom levels (17-21)
 - ✅ Real-time download progress tracking
 - ✅ Concurrent downloads (10 workers)
+- ✅ Video/GIF timelapse export with multi-preset support
+- ✅ Task queue system for background exports
+- ✅ Viewport-based Esri date detection with local changes filtering
+- ✅ Map state persistence across sessions
+- ✅ Blank tile detection for high-zoom historical imagery
 
 ### Technology Stack
 
@@ -108,21 +113,40 @@ graph TB
 ```
 imagery-desktop/
 ├── main.go                          # Application entry point
-├── app.go                           # Main application controller (1,700+ lines)
+├── app.go                           # Main application controller (3,289 lines)
+├── app_settings.go                  # Application settings persistence
 │
-├── internal/googleearth/            # Google Earth API client
-│   ├── client.go                    # Core client, encryption, initialization
-│   ├── tile.go                      # Coordinate transformations, projections
-│   ├── packet.go                    # Binary packet parser (KhQuadTreePacket16)
-│   ├── timemachine.go               # Historical imagery (protobuf packets)
-│   └── protobuf.go                  # Protobuf message definitions
+├── internal/
+│   ├── googleearth/                 # Google Earth API client
+│   │   ├── client.go                # Core client, encryption, initialization
+│   │   ├── tile.go                  # Coordinate transformations, projections
+│   │   ├── packet.go                # Binary packet parser (KhQuadTreePacket16)
+│   │   ├── timemachine.go           # Historical imagery (protobuf packets)
+│   │   └── protobuf.go              # Protobuf message definitions
+│   ├── video/                       # Video export engine
+│   │   └── export.go (957 lines)    # FFmpeg integration & encoding
+│   ├── taskqueue/                   # Task queue system
+│   │   ├── task.go                  # Task data structures
+│   │   └── queue.go (758 lines)     # Queue manager & worker
+│   ├── imagery/                     # Imagery processing
+│   ├── esri/                        # Esri Wayback client
+│   ├── googleearth/                 # Google Earth API client
+│   └── cache/                       # Caching layer
+│
+├── pkg/geotiff/                     # GeoTIFF generation
 │
 ├── frontend/
 │   └── src/
-│       ├── App.tsx                  # Main React component (900+ lines)
-│       ├── components/ui/           # shadcn/ui components
-│       └── lib/utils.ts             # Utility functions
+│       ├── App.tsx                  # Main React component (21,876 lines)
+│       ├── components/
+│       │   ├── AddTaskPanel.tsx     # Export task creation UI
+│       │   ├── ReExportDialog.tsx   # Multi-preset re-export UI
+│       │   ├── SettingsDialog.tsx   # App settings
+│       │   └── TaskPanel/           # Task queue management UI
+│       ├── services/api.ts          # Wails API wrapper
+│       └── types/index.ts           # TypeScript definitions
 │
+├── FFmpeg/ffmpeg                    # Bundled FFmpeg binary (80MB)
 └── build/bin/                       # Build output directory
 ```
 
@@ -355,6 +379,254 @@ https://wayback.maptiles.arcgis.com/arcgis/rest/services/world_imagery/mapserver
 Response: {"data": [1], "select": [123]}
 - data[0] = 1: Available
 - select: Skip to layer ID 123 if present
+```
+
+---
+
+## Video Export & Task Queue System
+
+### Video Export Engine
+
+The application supports exporting historical imagery as timelapse videos in multiple formats with customizable overlays and social media presets.
+
+#### Supported Formats
+
+- **MP4 (H.264)**: High-quality video using FFmpeg
+- **AVI (MJPEG)**: Fallback when FFmpeg unavailable
+- **GIF**: Animated GIF with Floyd-Steinberg dithering
+
+#### Social Media Presets
+
+```go
+PresetInstagramSquare   // 1080x1080
+PresetInstagramPortrait // 1080x1350
+PresetInstagramReel     // 1080x1920
+PresetTikTok            // 1080x1920
+PresetYouTube           // 1920x1080
+PresetYouTubeShorts     // 1080x1920
+PresetTwitter           // 1280x720
+PresetFacebook          // 1280x720
+```
+
+#### Multi-Preset Batch Export
+
+**CRITICAL FEATURE**: Users can select multiple presets in a single export task, and the system will generate separate videos for each preset automatically.
+
+**Implementation** [app.go:3214-3292]:
+
+```go
+// During task execution, export all selected presets
+presetsToExport := task.VideoOpts.Presets
+if len(presetsToExport) == 0 {
+    presetsToExport = []string{task.VideoOpts.Preset}  // Fallback to single preset
+}
+
+successCount := 0
+failedPresets := []string{}
+
+for i, presetID := range presetsToExport {
+    // Create video for each preset
+    videoOpts := VideoExportOptions{
+        Preset: presetID,  // Different dimensions for each preset
+        // ... other settings shared across all presets
+    }
+
+    // Use internal function to avoid opening folder multiple times
+    if err := a.exportTimelapseVideoInternal(bbox, zoom, dates, source, videoOpts, false); err != nil {
+        failedPresets = append(failedPresets, presetID)
+    } else {
+        successCount++
+    }
+}
+
+// Open download folder once at the end
+if successCount > 0 {
+    a.OpenDownloadFolder()
+}
+```
+
+**Output Files**:
+```
+timelapse_exports/
+├── ge_historical_timelapse_2020-01-01_to_2024-12-31_youtube.mp4
+├── ge_historical_timelapse_2020-01-01_to_2024-12-31_instagram_square.mp4
+├── ge_historical_timelapse_2020-01-01_to_2024-12-31_tiktok.mp4
+└── ...
+```
+
+#### Video Processing Pipeline
+
+```mermaid
+flowchart TD
+    Start[Load GeoTIFF Images] --> Process[Process Each Frame]
+    Process --> Crop[Crop to Aspect Ratio]
+    Crop --> Resize[Resize to Target Dimensions]
+    Resize --> Overlay[Add Overlays]
+
+    Overlay --> DateCheck{Show Date?}
+    DateCheck -->|Yes| DateOverlay[Render Date Text<br/>with Shadow]
+    DateCheck -->|No| LogoCheck
+    DateOverlay --> LogoCheck
+
+    LogoCheck{Show Logo?}
+    LogoCheck -->|Yes| LogoOverlay[Alpha-Blend Logo]
+    LogoCheck -->|No| Spotlight
+    LogoOverlay --> Spotlight
+
+    Spotlight{Spotlight?}
+    Spotlight -->|Yes| Gray[Gray Out Non-Spotlight Area]
+    Spotlight -->|No| Encode
+    Gray --> Encode
+
+    Encode[Encode Video]
+    Encode --> FFmpegCheck{FFmpeg Available?}
+    FFmpegCheck -->|Yes| H264[H.264/MP4<br/>High Quality]
+    FFmpegCheck -->|No| MJPEG[MJPEG/AVI<br/>Fallback]
+
+    H264 --> Done[Save Video File]
+    MJPEG --> Done
+```
+
+#### FFmpeg Integration
+
+**Bundled FFmpeg** [internal/video/export.go:182-286]:
+- macOS: `/FFmpeg/ffmpeg` (80MB binary)
+- Windows: `FFmpeg\\ffmpeg.exe`
+- Linux: `FFmpeg/ffmpeg`
+- Falls back to system FFmpeg in PATH if bundled version not found
+
+**Encoding Parameters**:
+```bash
+ffmpeg -y \
+  -framerate 30 \
+  -i frame_%05d.png \
+  -c:v libx264 \
+  -preset medium \
+  -crf {quality} \          # 0-51, calculated from user quality 0-100
+  -pix_fmt yuv420p \
+  -movflags +faststart \    # Enable streaming
+  output.mp4
+```
+
+**Timeout**: 5 minutes hard limit [internal/video/export.go:815]
+
+#### Re-Export Feature
+
+Users can re-export completed tasks with different presets or formats without re-downloading imagery.
+
+**Implementation** [app.go:2750-2835]:
+
+```go
+func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string) error {
+    // Retrieve completed task
+    task := a.taskQueue.GetTask(taskID)
+
+    // Reuse existing GeoTIFF imagery from task.OutputPath
+    a.downloadPath = task.OutputPath
+    defer func() { a.downloadPath = originalDownloadPath }()
+
+    // Export each selected preset
+    for i, presetID := range presets {
+        videoOpts := VideoExportOptions{
+            Preset:       presetID,
+            OutputFormat: videoFormat,  // Can change MP4 ↔ GIF
+            // ... preserve all other settings from original task
+        }
+
+        a.exportTimelapseVideoInternal(bbox, zoom, dates, source, videoOpts, false)
+    }
+
+    return nil
+}
+```
+
+### Task Queue System
+
+Manages long-running export tasks with persistence, progress tracking, and cancellation support.
+
+#### Task States
+
+```
+pending → in_progress → completed
+                     ↓
+                   failed
+                     ↓
+                  cancelled
+```
+
+#### Architecture [internal/taskqueue/]
+
+**QueueManager**:
+- Sequential task processing (one at a time)
+- Persistent state in `~/.walkthru-earth/imagery-desktop/queue/`
+- Real-time progress updates via channels
+- Thread-safe with mutex protection
+
+**Export Task**:
+```go
+type ExportTask struct {
+    ID           string
+    Status       string  // pending, in_progress, completed, failed, cancelled
+    Source       string  // "google" or "esri"
+    BBox         BoundingBox
+    Zoom         int
+    Dates        []DateInfo
+    VideoExport  bool
+    VideoOpts    *VideoExportOptions  // Including Presets array for multi-preset
+    OutputPath   string
+    Progress     TaskProgress
+    CreatedAt    time.Time
+    CompletedAt  *time.Time
+}
+```
+
+#### Event System
+
+```mermaid
+sequenceDiagram
+    participant Backend
+    participant QueueManager
+    participant Frontend
+
+    Backend->>QueueManager: AddTask()
+    QueueManager->>QueueManager: Persist to disk
+    QueueManager->>Frontend: emit("task-queue-update")
+    QueueManager->>QueueManager: Start worker
+
+    loop Every progress update
+        QueueManager->>Frontend: emit("task-progress", {percent, status})
+    end
+
+    QueueManager->>QueueManager: Task complete
+    QueueManager->>Frontend: emit("task-queue-update")
+    QueueManager->>QueueManager: Start next task
+```
+
+#### Mutex Deadlock Fix (Jan 2026)
+
+**Problem** [commit 5ac0cf3]: Functions like `DeleteTask` and `ClearCompleted` called `emitQueueUpdate()` while holding the mutex lock. `emitQueueUpdate()` then tried to acquire the same lock again, causing a deadlock.
+
+**Solution**:
+```go
+// Unlocked helper functions
+func (qm *QueueManager) getAllTasksUnlocked() []ExportTask {
+    // NO mutex lock - caller must hold lock
+}
+
+// Locked version for external callers
+func (qm *QueueManager) GetAllTasks() []ExportTask {
+    qm.mu.Lock()
+    defer qm.mu.Unlock()
+    return qm.getAllTasksUnlocked()
+}
+
+// Event emission for callers holding lock
+func (qm *QueueManager) emitQueueUpdateLocked() {
+    // Uses unlocked helpers
+    tasks := qm.getAllTasksUnlocked()
+    status := qm.getStatusUnlocked()
+    qm.onTasksChanged(tasks, status)
+}
 ```
 
 ---
@@ -720,6 +992,183 @@ y := numTiles - 1 - row
 yOffset := (maxRow - tile.Row) * TileSize
 ```
 
+### 7. Blank Tile Detection at High Zoom (SOLVED ✅)
+
+**Problem** [commit 9d53ebb, 8f3c3ba]:
+- Older Esri dates (pre-2016) only have imagery at lower zoom levels
+- At zoom 17-19, tiles return uniform white or black images (no coverage)
+- Videos exported with these dates show white/black frames
+
+**Root Cause:**
+- Esri doesn't return 404 for blank tiles - they return a 200 with a uniform color tile
+- Simple pixel sampling (5 points) was insufficient to detect uniform tiles
+
+**Solution** [app.go:528-624]:
+
+```go
+func isBlankTile(data []byte) bool {
+    img := image.Decode(data)
+    bounds := img.Bounds()
+
+    // Sample pixels across 8x8 grid (64 points instead of 5)
+    samplePoints := []image.Point{}
+    for row := 0; row < 8; row++ {
+        for col := 0; col < 8; col++ {
+            x := bounds.Min.X + (bounds.Dx()*col)/8
+            y := bounds.Min.Y + (bounds.Dy()*row)/8
+            samplePoints = append(samplePoints, image.Point{x, y})
+        }
+    }
+
+    // Count white/black pixels
+    whiteCount := 0
+    blackCount := 0
+
+    for _, pt := range samplePoints {
+        r, g, b, _ := img.At(pt.X, pt.Y).RGBA()
+        if r > 60000 && g > 60000 && b > 60000 {
+            whiteCount++  // White pixel (> 90% brightness)
+        } else if r < 5000 && g < 5000 && b < 5000 {
+            blackCount++  // Black pixel (< 10% brightness)
+        }
+    }
+
+    // If > 90% white or black, it's a blank tile
+    if whiteCount > 58 || blackCount > 58 {  // 58 out of 64 = 90%
+        return true
+    }
+
+    // Additional check: color variance
+    // Blank tiles have very low color variance
+    variance := calculateColorVariance(img, samplePoints)
+    if variance < 2000000 {  // Empirically determined threshold
+        return true
+    }
+
+    return false
+}
+```
+
+**Impact:**
+- ✅ Skips dates with blank tiles during Esri downloads
+- ✅ Prevents white/black frames in timelapse videos
+- ✅ Improves user experience for high-zoom historical imagery
+
+### 8. Viewport-Based Esri Date Detection (Jan 2026)
+
+**Problem** [commit 16d401a]:
+- Global Esri date fetch showed 189 dates for any location
+- Most dates didn't have local changes for the user's viewport
+- Cluttered UI with irrelevant dates
+
+**Solution**:
+- Query Esri metadata API for viewport center point
+- Filter dates by actual source date (`SRC_DATE2`) from metadata
+- Deduplicate by actual imagery date (not layer date)
+
+**Implementation** [frontend/src/hooks/useEsriDates.ts]:
+
+```typescript
+// Query metadata for viewport center
+const metadataUrl = `https://metadata.maptiles.arcgis.com/arcgis/rest/services/World_Imagery_Metadata${suffix}/MapServer/${scale}/query`
+const params = {
+    geometryType: 'esriGeometryPoint',
+    geometry: JSON.stringify({
+        spatialReference: { wkid: 3857 },
+        x: centerX,
+        y: centerY
+    }),
+    outFields: 'SRC_DATE2',
+    returnGeometry: false
+}
+
+// Extract actual capture date from metadata
+const srcDate = new Date(feature.attributes.SRC_DATE2)
+```
+
+**Impact:**
+- ✅ Reduced from 189 global dates to ~20-30 viewport-specific dates
+- ✅ Shows only dates with actual local changes
+- ✅ Automatically updates on map pan/zoom (debounced 300ms)
+
+### 9. Multi-Preset Export Error Handling (Jan 2026)
+
+**Problem**:
+- When exporting multiple presets (e.g., YouTube + Instagram + TikTok), if one preset failed, user didn't know which ones succeeded
+- `OpenDownloadFolder()` was called after each preset, opening multiple file explorer windows on Windows
+
+**Solution** [app.go:3214-3292, 2750-2835]:
+
+```go
+// Track successes and failures
+successCount := 0
+failedPresets := []string{}
+
+for i, presetID := range presetsToExport {
+    // Use internal function with openFolder=false
+    if err := a.exportTimelapseVideoInternal(bbox, zoom, dates, source, videoOpts, false); err != nil {
+        a.emitLog(fmt.Sprintf("❌ Failed to export preset %s: %v", presetID, err))
+        failedPresets = append(failedPresets, presetID)
+    } else {
+        successCount++
+        a.emitLog(fmt.Sprintf("✅ Successfully exported preset: %s", presetID))
+    }
+}
+
+// Open folder once at the end
+if successCount > 0 {
+    a.OpenDownloadFolder()
+}
+
+// Report final results to user
+if len(failedPresets) > 0 {
+    a.emitLog(fmt.Sprintf("⚠️ Export completed with %d success(es) and %d failure(s). Failed presets: %v",
+        successCount, len(failedPresets), failedPresets))
+}
+```
+
+**Impact:**
+- ✅ User sees which presets succeeded/failed with `emitLog()` messages
+- ✅ File explorer opens only once (Windows fix)
+- ✅ Partial success doesn't fail the entire task
+
+### 10. Map State Persistence (Jan 2026)
+
+**Problem** [commit 1eaa789]:
+- Map position reset on every app launch
+- Users had to re-navigate to their area of interest each time
+
+**Solution** [app_settings.go]:
+
+```go
+type AppSettings struct {
+    LastMapPosition struct {
+        Lat  float64 `json:"lat"`
+        Lon  float64 `json:"lon"`
+        Zoom float64 `json:"zoom"`
+    } `json:"lastMapPosition"`
+    TaskPanelCollapsed bool `json:"taskPanelCollapsed"`
+}
+
+// Save on app close
+func (a *App) SaveSettings() {
+    settings.LastMapPosition.Lat = a.mapLat
+    settings.LastMapPosition.Lon = a.mapLon
+    settings.LastMapPosition.Zoom = a.mapZoom
+    writeJSONFile(settingsPath, settings)
+}
+
+// Restore on app launch
+func (a *App) LoadSettings() AppSettings {
+    // Defaults to Zamalek, Cairo at zoom 15 if no saved settings
+}
+```
+
+**Additional Features**:
+- Fly-to-task: Click task in queue to navigate to its bbox
+- View sync: Switching split/single view preserves position
+- Google Earth loading indicator (matching Esri UX)
+
 ---
 
 ## Coordinate Systems & Projections
@@ -848,6 +1297,181 @@ graph LR
 - ✅ Production builds no longer emit verbose logs
 - ✅ Development retains full logging
 - ✅ ~30% performance improvement in production
+
+### Fix 4: Multi-Preset Video Export (Jan 2026)
+
+**Commit:** `8f3c3ba` - fix: multi-preset video export and blank tile detection
+
+**Problem:**
+When users selected multiple video presets (e.g., YouTube + Instagram + TikTok), only the Preset field was saved, not the Presets array. Additionally, only the first preset would export successfully, leaving users without their other requested formats.
+
+**Root Cause:**
+1. `AddExportTask()` wasn't copying the `Presets` array from frontend to backend task
+2. `OpenDownloadFolder()` was called after each preset export, opening multiple windows on Windows
+3. No user feedback about which presets succeeded/failed
+
+**Solution** [app.go:2921, 3214-3292, 2750-2835]:
+
+```go
+// 1. Fix task creation - copy Presets array
+task := &taskqueue.ExportTask{
+    VideoOpts: &taskqueue.VideoExportOptions{
+        Preset:  taskData.VideoOpts.Preset,
+        Presets: taskData.VideoOpts.Presets,  // ADDED: Multi-preset support
+        // ...
+    },
+}
+
+// 2. Create internal function with openFolder parameter
+func (a *App) exportTimelapseVideoInternal(bbox, zoom, dates, source, videoOpts, openFolder bool) error {
+    // ... export logic ...
+
+    // Only open folder if requested
+    if openFolder {
+        a.OpenDownloadFolder()
+    }
+}
+
+// 3. Export loop with error tracking
+successCount := 0
+failedPresets := []string{}
+
+for i, presetID := range presetsToExport {
+    if err := a.exportTimelapseVideoInternal(bbox, zoom, dates, source, videoOpts, false); err != nil {
+        a.emitLog(fmt.Sprintf("❌ Failed to export preset %s: %v", presetID, err))
+        failedPresets = append(failedPresets, presetID)
+    } else {
+        successCount++
+        a.emitLog(fmt.Sprintf("✅ Successfully exported preset: %s", presetID))
+    }
+}
+
+// 4. Open folder once at the end
+if successCount > 0 {
+    a.OpenDownloadFolder()
+}
+```
+
+**Impact:**
+- ✅ All selected presets now export correctly
+- ✅ File explorer opens only once (fixes Windows issue)
+- ✅ Clear user feedback on successes and failures
+- ✅ Re-export feature works with multiple presets
+
+### Fix 5: Blank Tile Detection (Jan 2026)
+
+**Commit:** `9d53ebb` - fix: improve blank tile detection with better sampling and variance check
+
+**Problem:**
+Older Esri dates (pre-2016) return white or black tiles at high zoom levels (17-19) instead of 404 errors, resulting in timelapse videos with blank frames.
+
+**Solution:**
+Implemented multi-layered blank detection:
+1. **Extensive sampling**: 8x8 grid (64 points) instead of 5 points
+2. **Color threshold**: >90% white or black pixels = blank
+3. **Variance check**: Low color variance (<2,000,000) = uniform
+
+**Impact:**
+- ✅ Automatically skips dates with no coverage at requested zoom
+- ✅ Prevents blank frames in timelapse videos
+- ✅ Logs skipped dates for user awareness
+
+### Fix 6: Task Queue Mutex Deadlock (Jan 2026)
+
+**Commit:** `5ac0cf3` - fix: resolve mutex deadlock in task queue operations
+
+**Problem:**
+Functions like `DeleteTask()` and `ClearCompleted()` called `emitQueueUpdate()` while holding the mutex lock. `emitQueueUpdate()` then tried to acquire the same lock, causing a deadlock.
+
+**Solution:**
+Created separate locked/unlocked function pairs:
+- `getAllTasksUnlocked()` - for callers holding lock
+- `GetAllTasks()` - for external callers (acquires lock)
+- `emitQueueUpdateLocked()` - for callers holding lock
+- `emitQueueUpdate()` - for external callers (acquires lock)
+
+**Impact:**
+- ✅ Eliminated all task queue deadlocks
+- ✅ Safe concurrent access patterns
+- ✅ No race conditions
+
+### Fix 7: Windows File Explorer Duplicates (Jan 2026)
+
+**Commit:** `db1ab19` - fix: avoid opening duplicate file explorer windows on Windows
+
+**Problem:**
+On Windows, `explorer.exe` always opens a new window, unlike macOS Finder which reuses existing windows. During multi-preset export, this opened 3+ windows for the same folder.
+
+**Solution** [app.go:1297-1322]:
+
+```go
+// Track recently opened folders (Windows only)
+type recentFolder struct {
+    path      string
+    timestamp time.Time
+}
+
+var recentlyOpened []recentFolder
+var openMutex sync.Mutex
+
+func (a *App) OpenFolder(path string) error {
+    if runtime.GOOS == "windows" {
+        openMutex.Lock()
+        defer openMutex.Unlock()
+
+        // Check if opened in last 30 seconds
+        for _, rf := range recentlyOpened {
+            if rf.path == absPath && time.Since(rf.timestamp) < 30*time.Second {
+                return nil  // Skip duplicate open
+            }
+        }
+
+        // Track this open
+        recentlyOpened = append(recentlyOpened, recentFolder{absPath, time.Now()})
+    }
+
+    // ... open folder ...
+}
+```
+
+**Impact:**
+- ✅ Single explorer window per export session
+- ✅ macOS/Linux behavior unchanged
+- ✅ Improved UX on Windows
+
+### Fix 8: Viewport-Based Esri Dates (Jan 2026)
+
+**Commit:** `16d401a` - feat: viewport-based Esri date detection with local changes filtering
+
+**Problem:**
+Global Esri date fetch showed 189 dates for any location, most without local changes for the user's area of interest.
+
+**Solution:**
+- Query Esri metadata API for viewport center point
+- Filter by actual source date (`SRC_DATE2`) from metadata
+- Debounced map updates (300ms) for performance
+- Parallel date fetches with goroutines
+
+**Impact:**
+- ✅ ~20-30 dates instead of 189
+- ✅ Shows only locally relevant dates
+- ✅ Auto-updates on map movement (like Google Earth source)
+- ✅ Faster UX with parallel fetching
+
+### Fix 9: Linux FFmpeg Download (Jan 2026)
+
+**Commit:** `c8a8d89` - fix: use BtbN GitHub releases for Linux FFmpeg download
+
+**Problem:**
+`johnvansickle.com` FFmpeg downloads were timing out in CI/CD pipelines.
+
+**Solution:**
+Switched to `BtbN/FFmpeg-Builds` GitHub releases (reliable static builds).
+
+**Impact:**
+- ✅ Reliable Linux builds in CI
+- ✅ Same quality static FFmpeg binaries
+- ✅ No timeout issues
 
 ---
 
@@ -1227,7 +1851,7 @@ See [AGENTS.md](AGENTS.md) for full workflow.
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2026-01-30
+**Document Version:** 1.1
+**Last Updated:** 2026-01-31
 **Maintained By:** Walkthru Earth
 **Contact:** hi@walkthru.earth

@@ -2455,6 +2455,11 @@ func (a *App) DownloadGoogleEarthHistoricalImageryRange(bbox BoundingBox, zoom i
 
 // ExportTimelapseVideo exports a timelapse video from a range of downloaded imagery
 func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInfo, source string, videoOpts VideoExportOptions) error {
+	return a.exportTimelapseVideoInternal(bbox, zoom, dates, source, videoOpts, true)
+}
+
+// exportTimelapseVideoInternal is the internal implementation with option to skip opening folder
+func (a *App) exportTimelapseVideoInternal(bbox BoundingBox, zoom int, dates []GEDateInfo, source string, videoOpts VideoExportOptions, openFolder bool) error {
 	log.Printf("=== ExportTimelapseVideo CALLED ===")
 	log.Printf("Parameters: bbox=%+v, zoom=%d, source=%s, dateCount=%d", bbox, zoom, source, len(dates))
 	log.Printf("VideoOpts: %+v", videoOpts)
@@ -2706,9 +2711,11 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		Status:     fmt.Sprintf("Video export complete: %s", filepath.Base(outputPath)),
 	})
 
-	// Auto-open download folder
-	if err := a.OpenDownloadFolder(); err != nil {
-		log.Printf("Failed to open download folder: %v", err)
+	// Auto-open download folder (only if requested, to avoid opening multiple times)
+	if openFolder {
+		if err := a.OpenDownloadFolder(); err != nil {
+			log.Printf("Failed to open download folder: %v", err)
+		}
 	}
 
 	return nil
@@ -2755,6 +2762,12 @@ func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string)
 	}()
 
 	// Export for each preset
+	log.Printf("[ReExport] Starting export of %d preset(s): %v", len(presets), presets)
+	a.emitLog(fmt.Sprintf("Re-exporting %d preset(s): %v", len(presets), presets))
+
+	successCount := 0
+	failedPresets := []string{}
+
 	for i, presetID := range presets {
 		log.Printf("[ReExport] Exporting preset %d/%d: %s", i+1, len(presets), presetID)
 
@@ -2787,22 +2800,49 @@ func (a *App) ReExportVideo(taskID string, presets []string, videoFormat string)
 			Quality:            task.VideoOpts.Quality,
 		}
 
-		if err := a.ExportTimelapseVideo(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
+		// Use internal function with openFolder=false to avoid opening folder multiple times
+		if err := a.exportTimelapseVideoInternal(bbox, task.Zoom, dates, task.Source, videoOpts, false); err != nil {
 			log.Printf("[ReExport] Failed to export preset %s: %v", presetID, err)
+			a.emitLog(fmt.Sprintf("❌ Failed to export preset %s: %v", presetID, err))
+			failedPresets = append(failedPresets, presetID)
 			// Continue with other presets
+		} else {
+			successCount++
+			a.emitLog(fmt.Sprintf("✅ Successfully exported preset: %s", presetID))
 		}
+	}
+
+	// Open download folder once at the end (only if at least one export succeeded)
+	if successCount > 0 {
+		if err := a.OpenDownloadFolder(); err != nil {
+			log.Printf("Failed to open download folder: %v", err)
+		}
+	}
+
+	// Report final results
+	if len(failedPresets) > 0 {
+		a.emitLog(fmt.Sprintf("⚠️ Re-export completed with %d success(es) and %d failure(s). Failed presets: %v",
+			successCount, len(failedPresets), failedPresets))
+	} else {
+		a.emitLog(fmt.Sprintf("✅ All %d preset(s) re-exported successfully", successCount))
 	}
 
 	a.emitDownloadProgress(DownloadProgress{
 		Downloaded:  len(presets),
 		Total:       len(presets),
 		Percent:     100,
-		Status:      fmt.Sprintf("Re-export complete (%d videos)", len(presets)),
+		Status:      fmt.Sprintf("Re-export complete (%d/%d successful)", successCount, len(presets)),
 		CurrentDate: len(presets),
 		TotalDates:  len(presets),
 	})
 
-	log.Printf("[ReExport] Completed re-export for task %s", taskID)
+	log.Printf("[ReExport] Completed re-export for task %s: %d success, %d failed", taskID, successCount, len(failedPresets))
+
+	// Return an error if all presets failed
+	if successCount == 0 {
+		return fmt.Errorf("all %d preset(s) failed to export", len(presets))
+	}
+
 	return nil
 }
 
@@ -3221,6 +3261,10 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 		}
 
 		log.Printf("[TaskQueue] Exporting %d video presets: %v", len(presetsToExport), presetsToExport)
+		a.emitLog(fmt.Sprintf("Exporting %d video preset(s): %v", len(presetsToExport), presetsToExport))
+
+		successCount := 0
+		failedPresets := []string{}
 
 		for i, presetID := range presetsToExport {
 			a.emitDownloadProgress(DownloadProgress{
@@ -3252,10 +3296,31 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 				Quality:            task.VideoOpts.Quality,
 			}
 
-			if err := a.ExportTimelapseVideo(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
+			// Use internal function with openFolder=false to avoid opening folder multiple times
+			if err := a.exportTimelapseVideoInternal(bbox, task.Zoom, dates, task.Source, videoOpts, false); err != nil {
 				log.Printf("[TaskQueue] Failed to export preset %s: %v", presetID, err)
+				a.emitLog(fmt.Sprintf("❌ Failed to export preset %s: %v", presetID, err))
+				failedPresets = append(failedPresets, presetID)
 				// Continue with other presets, don't fail the entire task
+			} else {
+				successCount++
+				a.emitLog(fmt.Sprintf("✅ Successfully exported preset: %s", presetID))
 			}
+		}
+
+		// Open download folder once at the end (only if at least one export succeeded)
+		if successCount > 0 {
+			if err := a.OpenDownloadFolder(); err != nil {
+				log.Printf("Failed to open download folder: %v", err)
+			}
+		}
+
+		// Report final results
+		if len(failedPresets) > 0 {
+			a.emitLog(fmt.Sprintf("⚠️ Export completed with %d success(es) and %d failure(s). Failed presets: %v",
+				successCount, len(failedPresets), failedPresets))
+		} else {
+			a.emitLog(fmt.Sprintf("✅ All %d preset(s) exported successfully", successCount))
 		}
 	}
 
