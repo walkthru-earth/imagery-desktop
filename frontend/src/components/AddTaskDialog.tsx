@@ -1,33 +1,25 @@
 import * as React from "react";
 import { useState } from "react";
-import { X, Download, FolderOpen, Film, Settings2 } from "lucide-react";
+import { X, Download, Film, Settings2, ListPlus } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/services/api";
 import type { BoundingBox, GEDateInfo } from "@/types";
 import { main } from "@/../wailsjs/go/models";
 
-export interface ExportOptions {
-  tiles: boolean;
-  geotiff: boolean;
-  both: boolean;
-  mp4: boolean;
-  gif: boolean;
-}
-
-export interface ExportDialogProps {
+export interface AddTaskDialogProps {
   isOpen: boolean;
   onClose: () => void;
   bbox: BoundingBox | null;
   zoom: number;
   source: "esri" | "google";
 
-  // Single date export
+  // Single date task
   singleDate?: string;
   singleHexDate?: string;
   singleEpoch?: number;
 
-  // Date range export
+  // Date range task
   dateRange?: Array<{ date: string; hexDate?: string; epoch?: number }>;
 }
 
@@ -51,7 +43,7 @@ const DATE_POSITIONS = [
   { id: "center", label: "Center" },
 ];
 
-export function ExportDialog({
+export function AddTaskDialog({
   isOpen,
   onClose,
   bbox,
@@ -61,7 +53,7 @@ export function ExportDialog({
   singleHexDate,
   singleEpoch,
   dateRange,
-}: ExportDialogProps) {
+}: AddTaskDialogProps) {
   const isRangeMode = !!dateRange && dateRange.length > 1;
 
   const [format, setFormat] = useState<"tiles" | "geotiff" | "both">("geotiff");
@@ -70,7 +62,7 @@ export function ExportDialog({
 
   // Video settings
   const [videoPreset, setVideoPreset] = useState("youtube");
-  const [frameDelay, setFrameDelay] = useState(0.5); // seconds per frame
+  const [frameDelay, setFrameDelay] = useState(0.5);
   const [showDateOverlay, setShowDateOverlay] = useState(true);
   const [datePosition, setDatePosition] = useState("bottom-right");
   const [videoQuality, setVideoQuality] = useState(90);
@@ -80,17 +72,7 @@ export function ExportDialog({
   const [cropX, setCropX] = useState(0.5);
   const [cropY, setCropY] = useState(0.5);
 
-  const [progress, setProgress] = useState<{
-    downloaded: number;
-    total: number;
-    percent: number;
-    status: string;
-    currentDate?: number;
-    totalDates?: number;
-  } | null>(null);
-
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportComplete, setExportComplete] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [exportZoom, setExportZoom] = useState(zoom);
 
   // Initialize zoom based on settings
@@ -111,175 +93,98 @@ export function ExportDialog({
     }
   }, [isOpen, zoom]);
 
-  React.useEffect(() => {
-    if (!isOpen) {
-      // Reset state when dialog closes
-      setProgress(null);
-      setIsExporting(false);
-      setExportComplete(false);
-    }
-  }, [isOpen]);
-
-  React.useEffect(() => {
-    // Listen for download progress events
-    const unsubscribe = api.onDownloadProgress((progressData: any) => {
-      setProgress(progressData);
-      if (progressData.percent === 100 && progressData.status === "Complete") {
-        setIsExporting(false);
-        setExportComplete(true);
-      }
-    });
-
-    return () => {
-      // Note: Wails EventsOff not directly exposed, but cleanup on unmount
-    };
-  }, []);
-
   // Get current preset dimensions
   const currentPreset = VIDEO_PRESETS.find(p => p.id === videoPreset) || VIDEO_PRESETS[0];
 
-  const handleExport = async () => {
+  const handleAddToQueue = async () => {
     if (!bbox) return;
 
-    setIsExporting(true);
-    setExportComplete(false);
-    setProgress({ downloaded: 0, total: 1, percent: 0, status: "Starting export..." });
+    setIsSubmitting(true);
 
     try {
+      // Build dates array
+      let dates: GEDateInfo[];
       if (isRangeMode && dateRange) {
-        // Multi-date export
-        if (source === "esri") {
-          const dates = dateRange.map(d => d.date);
-          await api.downloadEsriImageryRange(bbox, exportZoom, dates, format);
-        } else {
-          // Google Earth range
-          const geDates: GEDateInfo[] = dateRange.map(d => ({
-            date: d.date,
-            hexDate: d.hexDate || "",
-            epoch: d.epoch || 0,
-          }));
-          await api.downloadGoogleEarthHistoricalImageryRange(bbox, exportZoom, geDates, format);
-        }
-
-        // Video export if requested (after GeoTIFFs are downloaded)
-        console.log("[ExportDialog] Video export check:", {
-          includeVideo,
-          format,
-          willExport: includeVideo && format !== "tiles",
-          dateRangeLength: dateRange?.length
-        });
-
-        if (includeVideo && format !== "tiles") {
-          try {
-            console.log("[ExportDialog] Starting video export...");
-            setProgress({
-              downloaded: 0,
-              total: 1,
-              percent: 0,
-              status: "Starting video export..."
-            });
-
-            // Prepare video export options
-            const videoOpts = new main.VideoExportOptions({
-              width: currentPreset.width,
-              height: currentPreset.height,
-              preset: videoPreset,
-              cropX: cropX,
-              cropY: cropY,
-              spotlightEnabled: false,
-              spotlightCenterLat: 0,
-              spotlightCenterLon: 0,
-              spotlightRadiusKm: 1.0,
-              overlayOpacity: 0.6,
-              showDateOverlay: showDateOverlay,
-              dateFontSize: 48,
-              datePosition: datePosition,
-              frameDelay: frameDelay,
-              outputFormat: videoFormat,
-              quality: videoQuality,
-            });
-
-            // Convert dateRange to proper GEDateInfo array
-            const geDatesForVideo: GEDateInfo[] = dateRange.map(d => ({
-              date: d.date,
-              hexDate: d.hexDate || "",
-              epoch: d.epoch || 0,
-            }));
-
-            console.log("[ExportDialog] Calling exportTimelapseVideo with:", {
-              bbox,
-              zoom: exportZoom,
-              dateCount: geDatesForVideo.length,
-              source: source === "esri" ? "esri" : "ge_historical",
-              videoOpts: {
-                preset: videoPreset,
-                dimensions: `${currentPreset.width}x${currentPreset.height}`,
-                frameDelay,
-                showDateOverlay,
-                datePosition,
-              },
-              dates: geDatesForVideo.map(d => d.date)
-            });
-
-            const result = await api.exportTimelapseVideo(
-              bbox,
-              exportZoom,
-              geDatesForVideo,
-              source === "esri" ? "esri" : "ge_historical",
-              videoOpts
-            );
-
-            console.log("[ExportDialog] Video export completed successfully, result:", result);
-          } catch (videoError) {
-            console.error("[ExportDialog] Video export failed:", videoError);
-            console.error("[ExportDialog] Video error stack:", videoError instanceof Error ? videoError.stack : "no stack");
-            // Don't throw - let the main export succeed even if video fails
-            setProgress({
-              downloaded: 0,
-              total: 1,
-              percent: 0,
-              status: `Video export failed: ${videoError}`
-            });
-          }
-        } else {
-          console.log("[ExportDialog] Skipping video export because:", {
-            includeVideo,
-            format,
-            reason: !includeVideo ? "includeVideo is false" : "format is tiles"
-          });
-        }
+        dates = dateRange.map(d => ({
+          date: d.date,
+          hexDate: d.hexDate || "",
+          epoch: d.epoch || 0,
+        }));
       } else {
-        // Single date export
-        if (source === "esri" && singleDate) {
-          await api.downloadEsriImagery(bbox, exportZoom, singleDate, format);
-        } else if (source === "google" && singleHexDate !== undefined && singleEpoch !== undefined && singleDate) {
-          await api.downloadGoogleEarthHistoricalImagery(
-            bbox,
-            exportZoom,
-            singleHexDate,
-            singleEpoch,
-            singleDate,
-            format
-          );
-        }
+        dates = [{
+          date: singleDate || "",
+          hexDate: singleHexDate || "",
+          epoch: singleEpoch || 0,
+        }];
+      }
+
+      // Build task name
+      const taskName = isRangeMode
+        ? `${source === "esri" ? "Esri" : "Google Earth"} ${dates.length} dates (Z${exportZoom})`
+        : `${source === "esri" ? "Esri" : "Google Earth"} ${singleDate} (Z${exportZoom})`;
+
+      // Build video options if needed
+      let videoOpts: main.VideoExportOptions | undefined;
+      if (includeVideo && isRangeMode && format !== "tiles") {
+        videoOpts = new main.VideoExportOptions({
+          width: currentPreset.width,
+          height: currentPreset.height,
+          preset: videoPreset,
+          cropX: cropX,
+          cropY: cropY,
+          spotlightEnabled: false,
+          spotlightCenterLat: 0,
+          spotlightCenterLon: 0,
+          spotlightRadiusKm: 1.0,
+          overlayOpacity: 0.6,
+          showDateOverlay: showDateOverlay,
+          dateFontSize: 48,
+          datePosition: datePosition,
+          frameDelay: frameDelay,
+          outputFormat: videoFormat,
+          quality: videoQuality,
+        });
+      }
+
+      // Create task
+      const task = new main.TaskQueueExportTask({
+        id: "", // Will be assigned by backend
+        name: taskName,
+        status: "pending",
+        priority: 0,
+        createdAt: new Date().toISOString(),
+        source: source === "esri" ? "esri" : "google",
+        bbox: bbox,
+        zoom: exportZoom,
+        format: format,
+        dates: dates,
+        videoExport: includeVideo && isRangeMode && format !== "tiles",
+        videoOpts: videoOpts,
+        progress: {
+          currentPhase: "",
+          totalDates: dates.length,
+          currentDate: 0,
+          tilesTotal: 0,
+          tilesCompleted: 0,
+          percent: 0,
+        },
+      });
+
+      await api.addExportTask(task);
+
+      // Close dialog - task is now in queue
+      onClose();
+
+      // Auto-start queue if not running
+      const status = await api.getTaskQueueStatus();
+      if (!status.isRunning) {
+        await api.startTaskQueue();
       }
     } catch (error) {
-      console.error("Export failed:", error);
-      setProgress({
-        downloaded: 0,
-        total: 1,
-        percent: 0,
-        status: `Error: ${error}`,
-      });
-      setIsExporting(false);
-    }
-  };
-
-  const handleOpenFolder = async () => {
-    try {
-      await api.openDownloadFolder();
-    } catch (error) {
-      console.error("Failed to open download folder:", error);
+      console.error("Failed to add task to queue:", error);
+      alert("Failed to add task to queue: " + error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -291,13 +196,13 @@ export function ExportDialog({
         <CardHeader className="flex flex-row items-center justify-between border-b sticky top-0 bg-card z-10">
           <div>
             <h2 className="text-xl font-semibold">
-              Export {isRangeMode ? `${dateRange.length} Dates` : "Imagery"}
+              Add Task: {isRangeMode ? `${dateRange.length} Dates` : "Single Date"}
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
               {source === "esri" ? "Esri Wayback" : "Google Earth"}
             </p>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={isExporting}>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={isSubmitting}>
             <X className="h-4 w-4" />
           </Button>
         </CardHeader>
@@ -310,7 +215,7 @@ export function ExportDialog({
               <Button
                 variant={format === "tiles" ? "default" : "outline"}
                 onClick={() => setFormat("tiles")}
-                disabled={isExporting}
+                disabled={isSubmitting}
                 className="flex-1"
               >
                 Tiles Only
@@ -318,7 +223,7 @@ export function ExportDialog({
               <Button
                 variant={format === "geotiff" ? "default" : "outline"}
                 onClick={() => setFormat("geotiff")}
-                disabled={isExporting}
+                disabled={isSubmitting}
                 className="flex-1"
               >
                 GeoTIFF
@@ -326,16 +231,16 @@ export function ExportDialog({
               <Button
                 variant={format === "both" ? "default" : "outline"}
                 onClick={() => setFormat("both")}
-                disabled={isExporting}
+                disabled={isSubmitting}
                 className="flex-1"
               >
                 Both
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              • <strong>Tiles</strong>: Individual JPEG tiles{" "}
-              • <strong>GeoTIFF</strong>: Merged, georeferenced TIFF (EPSG:3857){" "}
-              • <strong>Both</strong>: Save tiles and GeoTIFF
+              <strong>Tiles</strong>: Individual JPEG tiles |{" "}
+              <strong>GeoTIFF</strong>: Merged, georeferenced TIFF |{" "}
+              <strong>Both</strong>: Save tiles and GeoTIFF
             </p>
           </div>
 
@@ -354,13 +259,13 @@ export function ExportDialog({
                 step="1"
                 value={exportZoom}
                 onChange={(e) => setExportZoom(parseInt(e.target.value))}
-                disabled={isExporting}
+                disabled={isSubmitting}
                 className="flex-1 h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
               />
               <span className="text-xs text-muted-foreground w-8">High</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Current Map Zoom: {zoom} • Download Zoom: {exportZoom}
+              Current Map Zoom: {zoom} | Download Zoom: {exportZoom}
             </p>
           </div>
 
@@ -372,7 +277,7 @@ export function ExportDialog({
                   type="checkbox"
                   checked={includeVideo}
                   onChange={(e) => setIncludeVideo(e.target.checked)}
-                  disabled={isExporting}
+                  disabled={isSubmitting}
                   className="w-4 h-4 rounded border-border accent-primary"
                 />
                 <Film className="h-4 w-4" />
@@ -389,7 +294,7 @@ export function ExportDialog({
                         variant={videoFormat === "mp4" ? "default" : "outline"}
                         size="sm"
                         onClick={() => setVideoFormat("mp4")}
-                        disabled={isExporting}
+                        disabled={isSubmitting}
                       >
                         MP4 (H.264)
                       </Button>
@@ -397,14 +302,11 @@ export function ExportDialog({
                         variant={videoFormat === "gif" ? "default" : "outline"}
                         size="sm"
                         onClick={() => setVideoFormat("gif")}
-                        disabled={isExporting}
+                        disabled={isSubmitting}
                       >
                         GIF
                       </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      MP4 uses H.264 codec for best quality and compatibility
-                    </p>
                   </div>
 
                   {/* Video Preset */}
@@ -413,7 +315,7 @@ export function ExportDialog({
                     <select
                       value={videoPreset}
                       onChange={(e) => setVideoPreset(e.target.value)}
-                      disabled={isExporting}
+                      disabled={isSubmitting}
                       className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                     >
                       {VIDEO_PRESETS.map(preset => (
@@ -439,11 +341,11 @@ export function ExportDialog({
                       step="0.1"
                       value={frameDelay}
                       onChange={(e) => setFrameDelay(parseFloat(e.target.value))}
-                      disabled={isExporting}
+                      disabled={isSubmitting}
                       className="w-full h-2 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
                     />
                     <p className="text-xs text-muted-foreground">
-                      How long each frame shows ({(1/frameDelay).toFixed(1)} frames per second)
+                      {(1/frameDelay).toFixed(1)} frames per second
                     </p>
                   </div>
 
@@ -454,7 +356,7 @@ export function ExportDialog({
                         type="checkbox"
                         checked={showDateOverlay}
                         onChange={(e) => setShowDateOverlay(e.target.checked)}
-                        disabled={isExporting}
+                        disabled={isSubmitting}
                         className="w-4 h-4 rounded border-border accent-primary"
                       />
                       <span className="text-sm">Show Date Overlay</span>
@@ -463,7 +365,7 @@ export function ExportDialog({
                       <select
                         value={datePosition}
                         onChange={(e) => setDatePosition(e.target.value)}
-                        disabled={isExporting}
+                        disabled={isSubmitting}
                         className="h-8 px-2 rounded-md border border-input bg-background text-xs"
                       >
                         {DATE_POSITIONS.map(pos => (
@@ -502,7 +404,7 @@ export function ExportDialog({
                           step="5"
                           value={videoQuality}
                           onChange={(e) => setVideoQuality(parseInt(e.target.value))}
-                          disabled={isExporting}
+                          disabled={isSubmitting}
                           className="w-full h-2 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
                         />
                       </div>
@@ -511,43 +413,8 @@ export function ExportDialog({
                       <div className="space-y-3 pt-2">
                         <label className="text-sm font-medium">Crop Position</label>
                         <p className="text-xs text-muted-foreground">
-                          The video will crop from the source imagery. Adjust where to crop from.
+                          Select where to crop from the source imagery.
                         </p>
-
-                        {/* Visual Crop Position Selector */}
-                        <div className="relative w-full aspect-video bg-background rounded-lg border overflow-hidden">
-                          {/* Grid lines */}
-                          <div className="absolute inset-0 grid grid-cols-3 grid-rows-3">
-                            {[...Array(9)].map((_, i) => (
-                              <div
-                                key={i}
-                                className="border border-border/30"
-                              />
-                            ))}
-                          </div>
-
-                          {/* Crop indicator */}
-                          <div
-                            className="absolute w-12 h-12 border-2 border-primary rounded bg-primary/20 transform -translate-x-1/2 -translate-y-1/2 transition-all duration-150 cursor-move"
-                            style={{
-                              left: `${cropX * 100}%`,
-                              top: `${cropY * 100}%`,
-                            }}
-                          />
-
-                          {/* Click to position */}
-                          <div
-                            className="absolute inset-0 cursor-crosshair"
-                            onClick={(e) => {
-                              if (isExporting) return;
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const x = (e.clientX - rect.left) / rect.width;
-                              const y = (e.clientY - rect.top) / rect.height;
-                              setCropX(Math.max(0, Math.min(1, x)));
-                              setCropY(Math.max(0, Math.min(1, y)));
-                            }}
-                          />
-                        </div>
 
                         {/* Preset position buttons */}
                         <div className="flex gap-1 flex-wrap">
@@ -569,7 +436,7 @@ export function ExportDialog({
                                 setCropX(x);
                                 setCropY(y);
                               }}
-                              disabled={isExporting}
+                              disabled={isSubmitting}
                               className={`w-8 h-8 text-xs rounded border transition-colors ${
                                 cropX === x && cropY === y
                                   ? "bg-primary text-primary-foreground border-primary"
@@ -598,80 +465,29 @@ export function ExportDialog({
             </div>
           )}
 
-          {/* Progress Bar */}
-          {progress && (
-            <div className="space-y-3 border-t pt-4">
-              {/* Date Range Progress (only shown for multi-date downloads) */}
-              {progress.totalDates && progress.totalDates > 1 && (
-                <div className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2">
-                  <span className="text-sm font-medium">
-                    Downloading Date {progress.currentDate} of {progress.totalDates}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {Math.round((progress.currentDate || 0) / progress.totalDates * 100)}% overall
-                  </span>
-                </div>
-              )}
-
-              {/* Current Task Status */}
-              <div className="flex justify-between text-sm">
-                <span className="font-medium">{progress.status}</span>
-                <span className="text-muted-foreground">{progress.percent}%</span>
-              </div>
-
-              {/* Tile Progress Bar */}
-              <div className="w-full bg-secondary rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-primary h-full transition-all duration-300 ease-out"
-                  style={{ width: `${progress.percent}%` }}
-                />
-              </div>
-
-              {progress.total > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {progress.downloaded} / {progress.total} tiles
-                </p>
-              )}
-            </div>
-          )}
-
           {/* Action Buttons */}
           <div className="flex gap-3 border-t pt-4">
-            {exportComplete ? (
-              <>
-                <Button
-                  onClick={handleOpenFolder}
-                  className="flex-1"
-                  variant="outline"
-                >
-                  <FolderOpen className="h-4 w-4 mr-2" />
-                  Open Folder
-                </Button>
-                <Button onClick={onClose} className="flex-1">
-                  Done
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  onClick={onClose}
-                  variant="outline"
-                  className="flex-1"
-                  disabled={isExporting}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleExport}
-                  className="flex-1"
-                  disabled={isExporting || !bbox}
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  {isExporting ? "Exporting..." : "Export"}
-                </Button>
-              </>
-            )}
+            <Button
+              onClick={onClose}
+              variant="outline"
+              className="flex-1"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddToQueue}
+              className="flex-1"
+              disabled={isSubmitting || !bbox}
+            >
+              <ListPlus className="h-4 w-4 mr-2" />
+              {isSubmitting ? "Adding..." : "Add to Queue"}
+            </Button>
           </div>
+
+          <p className="text-xs text-muted-foreground text-center">
+            Task will be added to the Export Queue panel on the right
+          </p>
         </CardContent>
       </Card>
     </div>

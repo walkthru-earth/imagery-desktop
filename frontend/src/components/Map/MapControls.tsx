@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useState } from "react";
-import { Download, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, MoveVertical } from "lucide-react";
+import { ListPlus, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, MoveVertical } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -14,7 +14,7 @@ import {
 import { SourceSelector } from "./SourceSelector";
 
 // Single View - Center Timeline Control
-function SingleViewTimeline({ onExport }: { onExport?: (dateRange?: any[]) => void }) {
+function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => void }) {
   const { state, dispatch } = useImageryContext();
   const mapState = state.maps.single;
   const dates = getAvailableDates(state, "single");
@@ -24,16 +24,16 @@ function SingleViewTimeline({ onExport }: { onExport?: (dateRange?: any[]) => vo
   const [rangeStart, setRangeStart] = useState(0);
   const [rangeEnd, setRangeEnd] = useState(0);
 
-  const handleExportRange = () => {
-    // Export range of dates
+  const handleAddTaskRange = () => {
+    // Add task with range of dates
     const selectedDates = dates.slice(
       Math.min(rangeStart, rangeEnd),
       Math.max(rangeStart, rangeEnd) + 1
     );
-    console.log("[MapControls] Exporting date range:", selectedDates);
-    // Pass selected date range to export handler
-    if (onExport) {
-      onExport(selectedDates);
+    console.log("[MapControls] Adding task with date range:", selectedDates);
+    // Pass selected date range to handler
+    if (onAddTask) {
+      onAddTask(selectedDates);
     }
   };
 
@@ -66,14 +66,14 @@ function SingleViewTimeline({ onExport }: { onExport?: (dateRange?: any[]) => vo
           >
             <Calendar className="h-5 w-5" />
           </Button>
-          {onExport && dates.length > 0 && (
+          {onAddTask && dates.length > 0 && (
             <Button
               size="default"
               variant="outline"
-              onClick={() => isRangeMode ? handleExportRange() : onExport()}
-              title={isRangeMode ? "Export selected date range" : "Export current view"}
+              onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
+              title={isRangeMode ? "Add task for date range" : "Add task for current view"}
             >
-              <Download className="h-5 w-5" />
+              <ListPlus className="h-5 w-5" />
               {isRangeMode && (
                 <span className="ml-1.5 text-sm font-medium">
                   ({Math.abs(rangeEnd - rangeStart) + 1})
@@ -214,10 +214,10 @@ function SingleViewTimeline({ onExport }: { onExport?: (dateRange?: any[]) => vo
 // Main MapControls Component
 export function MapControls({
   className,
-  onExport,
+  onAddTask,
 }: {
   className?: string;
-  onExport?: (dateRange?: any[]) => void;
+  onAddTask?: (dateRange?: any[]) => void;
 }) {
   const { state, dispatch } = useImageryContext();
 
@@ -231,7 +231,7 @@ export function MapControls({
           className
         )}
       >
-        <SingleViewTimeline onExport={onExport} />
+        <SingleViewTimeline onAddTask={onAddTask} />
       </div>
     );
   }

@@ -19,7 +19,7 @@ import { MainLayout } from "@/components/Layout";
 import { Header } from "@/components/Layout/Header";
 import { MapControls } from "@/components/Map/MapControls";
 import { MapCompare } from "@/components/Map/MapCompare";
-import { ExportDialog } from "@/components/ExportDialog";
+import { AddTaskDialog } from "@/components/AddTaskDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { TileGridOverlay } from "@/components/Map/TileGridOverlay";
 import { CoordinatesOverlay } from "@/components/Map/CoordinatesOverlay";
@@ -38,8 +38,8 @@ function App() {
   const { theme, setTheme } = useTheme();
   const { state, dispatch } = useImageryContext();
 
-  // Export dialog state
-  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  // Add Task dialog state
+  const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [selectedDateRange, setSelectedDateRange] = useState<any[] | null>(null);
 
   // Settings dialog state
@@ -313,12 +313,12 @@ function App() {
   }, [singleMap, state.viewMode, state.layers.bbox]);
 
   // ===================
-  // Export Handler
+  // Add Task Handler
   // ===================
-  const handleExport = async (dateRange?: any[]) => {
-    console.log("Export triggered - opening export dialog", { dateRange });
+  const handleAddTask = async (dateRange?: any[]) => {
+    console.log("Add task triggered - opening dialog", { dateRange });
     setSelectedDateRange(dateRange || null);
-    setIsExportDialogOpen(true);
+    setIsAddTaskDialogOpen(true);
   };
 
   // Helper to get current map's bbox
@@ -335,10 +335,10 @@ function App() {
     );
   };
 
-  // Helper to get export data for current view
-  const getExportData = () => {
+  // Helper to get task data for current view
+  const getTaskData = () => {
     if (state.viewMode !== "single") {
-      return null; // Export only available in single view for now
+      return null; // Task creation only available in single view for now
     }
 
     const mapState = state.maps.single;
@@ -402,11 +402,6 @@ function App() {
             console.log("[App] View mode changed to:", mode);
             dispatch({ type: "SET_VIEW_MODE", mode });
           }}
-          showExportOptions={state.viewMode === "single"}
-          isRangeMode={false}
-          exportOptions={{ mergedGeotiff: true, tiles: false, mp4: false, gif: false }}
-          onExportOptionsChange={() => {}}
-          onExport={handleExport}
           onOpenSettings={() => setIsSettingsDialogOpen(true)}
         />
       }
@@ -449,13 +444,13 @@ function App() {
         )}
 
         {/* Map Controls */}
-        <MapControls onExport={handleExport} />
+        <MapControls onAddTask={handleAddTask} />
 
-        {/* Export Dialog */}
-        <ExportDialog
-          isOpen={isExportDialogOpen}
-          onClose={() => setIsExportDialogOpen(false)}
-          {...(getExportData() || {
+        {/* Add Task Dialog */}
+        <AddTaskDialog
+          isOpen={isAddTaskDialogOpen}
+          onClose={() => setIsAddTaskDialogOpen(false)}
+          {...(getTaskData() || {
             bbox: null,
             zoom: 10,
             source: "esri",
@@ -486,6 +481,7 @@ function App() {
         <TaskPanel
           isOpen={isTaskPanelOpen}
           onToggle={() => setIsTaskPanelOpen(!isTaskPanelOpen)}
+          onAddTask={() => handleAddTask()}
         />
       </div>
     </MainLayout>

@@ -7,6 +7,7 @@ import {
   PanelRight,
   Trash2,
   RefreshCw,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskList } from "./TaskList";
@@ -18,9 +19,10 @@ interface TaskPanelProps {
   isOpen: boolean;
   onToggle: () => void;
   onTaskSelect?: (task: ExportTask) => void;
+  onAddTask?: () => void;
 }
 
-export function TaskPanel({ isOpen, onToggle, onTaskSelect }: TaskPanelProps) {
+export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask }: TaskPanelProps) {
   const [tasks, setTasks] = useState<ExportTask[]>([]);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -199,37 +201,53 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect }: TaskPanelProps) {
       </div>
 
       {/* Queue Controls */}
-      <div className="flex items-center gap-2 p-4 border-b bg-muted/30">
-        {queueStatus?.isRunning && !queueStatus?.isPaused ? (
+      <div className="flex flex-col gap-2 p-4 border-b bg-muted/30">
+        {/* Add Task Button */}
+        {onAddTask && (
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
-            onClick={handlePauseQueue}
-            className="flex-1"
+            onClick={onAddTask}
+            className="w-full"
           >
-            <Pause className="w-4 h-4 mr-2" />
-            Pause Queue
-          </Button>
-        ) : (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleStartQueue}
-            disabled={pendingCount === 0}
-            className="flex-1"
-          >
-            <Play className="w-4 h-4 mr-2" />
-            {queueStatus?.isPaused ? "Resume Queue" : "Start Queue"}
+            <Plus className="w-4 h-4 mr-2" />
+            Add Task
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={loadTasks}
-          title="Refresh"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </Button>
+
+        {/* Play/Pause Controls */}
+        <div className="flex items-center gap-2">
+          {queueStatus?.isRunning && !queueStatus?.isPaused ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePauseQueue}
+              className="flex-1"
+            >
+              <Pause className="w-4 h-4 mr-2" />
+              Pause Queue
+            </Button>
+          ) : (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleStartQueue}
+              disabled={pendingCount === 0}
+              className="flex-1"
+            >
+              <Play className="w-4 h-4 mr-2" />
+              {queueStatus?.isPaused ? "Resume Queue" : "Start Queue"}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={loadTasks}
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Task List */}
