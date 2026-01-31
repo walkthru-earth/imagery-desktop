@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"imagery-desktop/internal/cache"
+	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
 )
 
@@ -15,18 +16,22 @@ import (
 type Server struct {
 	ctx           context.Context
 	geClient      *googleearth.Client
+	esriClient    *esri.Client
+	esriLayers    []*esri.Layer
 	tileCache     *cache.PersistentTileCache
 	tileServerURL string
 	devMode       bool
 }
 
 // NewServer creates a new tile server instance
-func NewServer(ctx context.Context, geClient *googleearth.Client, tileCache *cache.PersistentTileCache, devMode bool) *Server {
+func NewServer(ctx context.Context, geClient *googleearth.Client, esriClient *esri.Client, esriLayers []*esri.Layer, tileCache *cache.PersistentTileCache, devMode bool) *Server {
 	return &Server{
-		ctx:       ctx,
-		geClient:  geClient,
-		tileCache: tileCache,
-		devMode:   devMode,
+		ctx:        ctx,
+		geClient:   geClient,
+		esriClient: esriClient,
+		esriLayers: esriLayers,
+		tileCache:  tileCache,
+		devMode:    devMode,
 	}
 }
 
@@ -60,6 +65,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/google-earth/", s.handleGoogleEarthTile)
 	mux.HandleFunc("/google-earth-historical/", s.handleGoogleEarthHistoricalTile)
+	mux.HandleFunc("/esri-wayback/", s.handleEsriTile)
 
 	// Listen on a random available port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

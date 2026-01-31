@@ -242,8 +242,15 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
+	// Load Esri layers for tile server caching
+	esriLayers, err := a.esriClient.GetLayers()
+	if err != nil {
+		wailsRuntime.LogWarning(ctx, fmt.Sprintf("Failed to load Esri layers: %v", err))
+		esriLayers = []*esri.Layer{} // Use empty slice if loading fails
+	}
+
 	// Initialize and start local tile server
-	a.tileServer = tileserver.NewServer(ctx, a.geClient, a.tileCache, a.devMode)
+	a.tileServer = tileserver.NewServer(ctx, a.geClient, a.esriClient, esriLayers, a.tileCache, a.devMode)
 	go func() {
 		if err := a.tileServer.Start(); err != nil {
 			wailsRuntime.LogError(ctx, fmt.Sprintf("Failed to start tile server: %v", err))
