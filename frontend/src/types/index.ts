@@ -91,6 +91,8 @@ export interface VideoExportOptions {
   showDateOverlay: boolean;
   dateFontSize: number;
   datePosition: string;
+  showLogo: boolean;
+  logoPosition: string;
   frameDelay: number;
   outputFormat: string;
   quality: number;

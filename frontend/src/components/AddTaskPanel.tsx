@@ -75,8 +75,8 @@ export function AddTaskPanel({
   const [datePosition, setDatePosition] = useState("bottom-right");
   const [videoQuality, setVideoQuality] = useState(90);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [cropX, setCropX] = useState(0.5);
-  const [cropY, setCropY] = useState(0.5);
+  const [showLogo, setShowLogo] = useState(true);
+  const [logoPosition, setLogoPosition] = useState("bottom-left");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [exportZoom, setExportZoom] = useState(zoom);
 
@@ -97,11 +97,12 @@ export function AddTaskPanel({
       cropWidth = cropHeight * aspectRatio / containerAspectRatio;
     }
 
-    const x = cropX * (1 - cropWidth);
-    const y = cropY * (1 - cropHeight);
+    // Always center crop (cropX=0.5, cropY=0.5)
+    const x = 0.5 * (1 - cropWidth);
+    const y = 0.5 * (1 - cropHeight);
 
     return { x, y, width: cropWidth, height: cropHeight };
-  }, [currentPreset, cropX, cropY]);
+  }, [currentPreset]);
 
   useEffect(() => {
     if (isOpen && includeVideo && onCropChange) {
@@ -163,8 +164,8 @@ export function AddTaskPanel({
           width: currentPreset.width,
           height: currentPreset.height,
           preset: videoPreset,
-          cropX,
-          cropY,
+          cropX: 0.5,  // Always center
+          cropY: 0.5,  // Always center
           spotlightEnabled: false,
           spotlightCenterLat: 0,
           spotlightCenterLon: 0,
@@ -173,6 +174,8 @@ export function AddTaskPanel({
           showDateOverlay,
           dateFontSize: 48,
           datePosition,
+          showLogo,
+          logoPosition,
           frameDelay,
           outputFormat: videoFormat,
           quality: videoQuality,
@@ -437,33 +440,33 @@ export function AddTaskPanel({
                           />
                         </div>
 
-                        {/* Crop Position */}
-                        <div className="space-y-2">
-                          <Label className="text-xs">Crop Position</Label>
-                          <div className="grid grid-cols-3 gap-1">
-                            {[
-                              { label: "↖", x: 0, y: 0 },
-                              { label: "↑", x: 0.5, y: 0 },
-                              { label: "↗", x: 1, y: 0 },
-                              { label: "←", x: 0, y: 0.5 },
-                              { label: "•", x: 0.5, y: 0.5 },
-                              { label: "→", x: 1, y: 0.5 },
-                              { label: "↙", x: 0, y: 1 },
-                              { label: "↓", x: 0.5, y: 1 },
-                              { label: "↘", x: 1, y: 1 },
-                            ].map(({ label, x, y }) => (
-                              <Button
-                                key={label}
-                                variant={cropX === x && cropY === y ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => { setCropX(x); setCropY(y); }}
-                                disabled={isSubmitting}
-                                className="h-8 text-xs"
-                              >
-                                {label}
-                              </Button>
-                            ))}
+                        {/* Logo Overlay */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id="logo-overlay"
+                              checked={showLogo}
+                              onCheckedChange={(checked) => setShowLogo(checked === true)}
+                              disabled={isSubmitting}
+                            />
+                            <Label htmlFor="logo-overlay" className="text-xs cursor-pointer">
+                              Show Logo
+                            </Label>
                           </div>
+                          {showLogo && (
+                            <Select value={logoPosition} onValueChange={setLogoPosition} disabled={isSubmitting}>
+                              <SelectTrigger size="sm" className="h-7 w-auto text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {DATE_POSITIONS.map(pos => (
+                                  <SelectItem key={pos.id} value={pos.id} className="text-xs">
+                                    {pos.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
                         </div>
                       </div>
                     )}

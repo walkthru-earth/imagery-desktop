@@ -49,6 +49,8 @@ type VideoExportOptions struct {
 	ShowDateOverlay  bool    `json:"showDateOverlay"`
 	DateFontSize     float64 `json:"dateFontSize"`
 	DatePosition     string  `json:"datePosition"`
+	ShowLogo         bool    `json:"showLogo"`
+	LogoPosition     string  `json:"logoPosition"`
 	FrameDelay       float64 `json:"frameDelay"`
 	OutputFormat     string  `json:"outputFormat"`
 	Quality          int     `json:"quality"`

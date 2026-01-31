@@ -119,6 +119,12 @@ type ExportOptions struct {
 	DateFormat      string // e.g., "2006-01-02", "Jan 02, 2006"
 	DateFontPath    string // Path to font file
 
+	// Logo overlay
+	ShowLogo     bool
+	LogoPosition string // "top-left", "top-right", "bottom-left", "bottom-right"
+	LogoImage    image.Image
+	LogoScale    float64 // Scale factor for logo (default 1.0)
+
 	// Video settings
 	FrameRate    int     // FPS (e.g., 30, 24, 15)
 	FrameDelay   float64 // Seconds between frames (e.g., 0.5 = 2 images per second)
@@ -148,6 +154,9 @@ func DefaultExportOptions() *ExportOptions {
 		DateColor:       color.RGBA{255, 255, 255, 255},
 		DateShadow:      true,
 		DateFormat:      "Jan 02, 2006",
+		ShowLogo:        true,
+		LogoPosition:    "bottom-left",
+		LogoScale:       1.0,
 		FrameRate:       30,
 		FrameDelay:      0.5,
 		OutputFormat:    "mp4",
@@ -357,6 +366,11 @@ func (e *Exporter) ProcessFrame(sourceImage image.Image, date time.Time) (*image
 		e.drawDateOverlay(output, date)
 	}
 
+	// Step 3: Add logo overlay if enabled
+	if opts.ShowLogo && opts.LogoImage != nil {
+		e.drawLogoOverlay(output)
+	}
+
 	return output, nil
 }
 
@@ -514,6 +528,106 @@ func (e *Exporter) drawDateOverlay(dst *image.RGBA, date time.Time) {
 	drawer.DrawString(dateStr)
 }
 
+// drawLogoOverlay draws the logo on the frame
+func (e *Exporter) drawLogoOverlay(dst *image.RGBA) {
+	if e.options.LogoImage == nil {
+		return
+	}
+
+	logoImg := e.options.LogoImage
+	logoBounds := logoImg.Bounds()
+	logoWidth := logoBounds.Dx()
+	logoHeight := logoBounds.Dy()
+
+	// Scale logo to reasonable size (max 10% of video height)
+	maxHeight := e.options.Height / 10
+	scale := e.options.LogoScale
+	if logoHeight > maxHeight {
+		scale = float64(maxHeight) / float64(logoHeight)
+	}
+
+	scaledWidth := int(float64(logoWidth) * scale)
+	scaledHeight := int(float64(logoHeight) * scale)
+
+	// Calculate position
+	var x, y int
+	padding := 20
+
+	switch e.options.LogoPosition {
+	case "top-left":
+		x = padding
+		y = padding
+	case "top-right":
+		x = e.options.Width - scaledWidth - padding
+		y = padding
+	case "bottom-left":
+		x = padding
+		y = e.options.Height - scaledHeight - padding
+	case "bottom-right":
+		x = e.options.Width - scaledWidth - padding
+		y = e.options.Height - scaledHeight - padding
+	case "center":
+		x = (e.options.Width - scaledWidth) / 2
+		y = (e.options.Height - scaledHeight) / 2
+	default:
+		x = padding
+		y = e.options.Height - scaledHeight - padding
+	}
+
+	// Draw scaled logo with alpha blending
+	for dy := 0; dy < scaledHeight; dy++ {
+		for dx := 0; dx < scaledWidth; dx++ {
+			// Source pixel (scaled)
+			sx := int(float64(dx) / scale)
+			sy := int(float64(dy) / scale)
+			if sx >= logoWidth {
+				sx = logoWidth - 1
+			}
+			if sy >= logoHeight {
+				sy = logoHeight - 1
+			}
+
+			srcColor := logoImg.At(logoBounds.Min.X+sx, logoBounds.Min.Y+sy)
+			sr, sg, sb, sa := srcColor.RGBA()
+
+			// Skip fully transparent pixels
+			if sa == 0 {
+				continue
+			}
+
+			dstX := x + dx
+			dstY := y + dy
+			if dstX < 0 || dstX >= e.options.Width || dstY < 0 || dstY >= e.options.Height {
+				continue
+			}
+
+			// Alpha blending
+			if sa == 65535 {
+				// Fully opaque - just copy
+				dst.Set(dstX, dstY, srcColor)
+			} else {
+				// Blend with destination
+				dstColor := dst.At(dstX, dstY)
+				dr, dg, db, da := dstColor.RGBA()
+
+				// Standard alpha blending
+				outA := sa + (da * (65535 - sa) / 65535)
+				if outA > 0 {
+					outR := (sr*sa + dr*(65535-sa)) / 65535
+					outG := (sg*sa + dg*(65535-sa)) / 65535
+					outB := (sb*sa + db*(65535-sa)) / 65535
+					dst.Set(dstX, dstY, color.RGBA64{
+						R: uint16(outR),
+						G: uint16(outG),
+						B: uint16(outB),
+						A: uint16(outA),
+					})
+				}
+			}
+		}
+	}
+}
+
 // ExportVideo creates a video from processed frames
 func (e *Exporter) ExportVideo(frames []Frame, outputPath string) error {
 	opts := e.options
@@ -563,17 +677,16 @@ func (e *Exporter) exportH264(frames []Frame, outputPath string) error {
 	log.Printf("[VideoExport] Frame duplication count: %d (frameDelay=%.2f, frameRate=%d)",
 		duplicateCount, e.options.FrameDelay, e.options.FrameRate)
 
-	// Save original frames as PNG (no Go-side processing - let FFmpeg handle scaling/cropping)
+	// Process and save frames as PNG with date/logo overlays
+	// ProcessFrame handles resizing, cropping, and adding overlays
 	frameIndex := 0
-	var srcWidth, srcHeight int
 	for i, frame := range frames {
-		log.Printf("[VideoExport] Saving frame %d/%d", i+1, len(frames))
+		log.Printf("[VideoExport] Processing frame %d/%d", i+1, len(frames))
 
-		// Record source dimensions from first frame
-		if i == 0 {
-			srcWidth = frame.Image.Bounds().Dx()
-			srcHeight = frame.Image.Bounds().Dy()
-			log.Printf("[VideoExport] Source frame dimensions: %dx%d", srcWidth, srcHeight)
+		// Process frame to add date/logo overlays and resize to target dimensions
+		processedFrame, err := e.ProcessFrame(frame.Image, frame.Date)
+		if err != nil {
+			return fmt.Errorf("failed to process frame %d: %w", i, err)
 		}
 
 		// Duplicate frame for proper timing
@@ -584,7 +697,7 @@ func (e *Exporter) exportH264(frames []Frame, outputPath string) error {
 				return fmt.Errorf("failed to create frame file: %w", err)
 			}
 
-			if err := png.Encode(f, frame.Image); err != nil {
+			if err := png.Encode(f, processedFrame); err != nil {
 				f.Close()
 				return fmt.Errorf("failed to encode frame %d: %w", i, err)
 			}
@@ -593,7 +706,7 @@ func (e *Exporter) exportH264(frames []Frame, outputPath string) error {
 		}
 	}
 
-	log.Printf("[VideoExport] Saved %d frames to temp directory", frameIndex)
+	log.Printf("[VideoExport] Saved %d processed frames to temp directory", frameIndex)
 
 	// Verify frames exist
 	files, err := filepath.Glob(filepath.Join(tempDir, "frame_*.png"))
@@ -601,51 +714,6 @@ func (e *Exporter) exportH264(frames []Frame, outputPath string) error {
 		return fmt.Errorf("no frame files found in temp directory after processing")
 	}
 	log.Printf("[VideoExport] Verified %d frame files exist", len(files))
-
-	// Build video filter for proper aspect ratio handling
-	// Strategy: Scale to fill (maintaining aspect ratio), then crop to exact dimensions
-	targetW := e.options.Width
-	targetH := e.options.Height
-
-	// Calculate scale factor to fill the target (the larger scale to cover the target)
-	srcAspect := float64(srcWidth) / float64(srcHeight)
-	targetAspect := float64(targetW) / float64(targetH)
-
-	var scaleFilter string
-	if srcAspect > targetAspect {
-		// Source is wider than target - scale by height, crop width
-		scaleFilter = fmt.Sprintf("scale=-1:%d", targetH)
-	} else {
-		// Source is taller than target - scale by width, crop height
-		scaleFilter = fmt.Sprintf("scale=%d:-1", targetW)
-	}
-
-	// Calculate crop position based on CropX and CropY (0.0-1.0)
-	// iw/ih = input width/height after scaling
-	// out_w/out_h = target dimensions
-	// x = (iw - out_w) * cropX
-	// y = (ih - out_h) * cropY
-	cropX := e.options.CropX
-	cropY := e.options.CropY
-	if cropX < 0 {
-		cropX = 0.5
-	}
-	if cropY < 0 {
-		cropY = 0.5
-	}
-	if cropX > 1 {
-		cropX = 0.5
-	}
-	if cropY > 1 {
-		cropY = 0.5
-	}
-
-	cropFilter := fmt.Sprintf("crop=%d:%d:(iw-%d)*%.2f:(ih-%d)*%.2f",
-		targetW, targetH, targetW, cropX, targetH, cropY)
-
-	// Combine filters
-	videoFilter := fmt.Sprintf("%s,%s", scaleFilter, cropFilter)
-	log.Printf("[VideoExport] Video filter: %s", videoFilter)
 
 	// Calculate CRF (quality): 0-51, lower is better
 	// Map quality 0-100 to CRF 51-0
@@ -658,12 +726,12 @@ func (e *Exporter) exportH264(frames []Frame, outputPath string) error {
 	}
 
 	// Build FFmpeg command
+	// Frames are already processed to target dimensions with overlays
 	inputPattern := filepath.Join(tempDir, "frame_%05d.png")
 	args := []string{
 		"-y",                    // Overwrite output
 		"-framerate", fmt.Sprintf("%d", e.options.FrameRate),
 		"-i", inputPattern,
-		"-vf", videoFilter,      // Scale and crop filter
 		"-c:v", "libx264",       // H.264 codec
 		"-preset", "medium",     // Encoding speed/quality tradeoff
 		"-crf", fmt.Sprintf("%d", crf),

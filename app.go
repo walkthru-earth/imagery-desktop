@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"image"
 	"image/draw"
@@ -38,6 +39,9 @@ import (
 
 	_ "golang.org/x/image/tiff" // Register TIFF decoder for GeoTIFF loading
 )
+
+//go:embed frontend/src/assets/images/icon.png
+var logoImageData []byte
 
 // Linker flags
 var (
@@ -2168,6 +2172,10 @@ type VideoExportOptions struct {
 	DateFontSize    float64 `json:"dateFontSize"`
 	DatePosition    string  `json:"datePosition"` // "top-left", "top-right", "bottom-left", "bottom-right"
 
+	// Logo overlay
+	ShowLogo     bool   `json:"showLogo"`
+	LogoPosition string `json:"logoPosition"` // "top-left", "top-right", "bottom-left", "bottom-right"
+
 	// Video settings
 	FrameDelay   float64 `json:"frameDelay"`   // Seconds between frames
 	OutputFormat string  `json:"outputFormat"` // "mp4", "gif"
@@ -2295,11 +2303,25 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		DateShadow:      true,
 		DateFormat:      "Jan 02, 2006",
 		DateFontPath:    fontPath,
+		ShowLogo:        videoOpts.ShowLogo,
+		LogoPosition:    videoOpts.LogoPosition,
+		LogoScale:       1.0,
 		FrameRate:       30,
 		FrameDelay:      videoOpts.FrameDelay,
 		OutputFormat:    videoOpts.OutputFormat,
 		Quality:         videoOpts.Quality,
 		UseH264:         true, // Try to use H.264 if FFmpeg is available
+	}
+
+	// Load logo image if enabled
+	if videoOpts.ShowLogo {
+		logoImg, err := a.loadLogoImage()
+		if err != nil {
+			log.Printf("[VideoExport] Warning: Failed to load logo: %v", err)
+		} else {
+			opts.LogoImage = logoImg
+			log.Printf("[VideoExport] Logo image loaded")
+		}
 	}
 
 	// If spotlight is enabled, calculate pixel coordinates from geographic coordinates
@@ -2607,6 +2629,8 @@ func convertTaskToFrontend(t *taskqueue.ExportTask) TaskQueueExportTask {
 			ShowDateOverlay:    t.VideoOpts.ShowDateOverlay,
 			DateFontSize:       t.VideoOpts.DateFontSize,
 			DatePosition:       t.VideoOpts.DatePosition,
+			ShowLogo:           t.VideoOpts.ShowLogo,
+			LogoPosition:       t.VideoOpts.LogoPosition,
 			FrameDelay:         t.VideoOpts.FrameDelay,
 			OutputFormat:       t.VideoOpts.OutputFormat,
 			Quality:            t.VideoOpts.Quality,
@@ -2658,6 +2682,8 @@ func (a *App) AddExportTask(taskData TaskQueueExportTask) (string, error) {
 			ShowDateOverlay:    taskData.VideoOpts.ShowDateOverlay,
 			DateFontSize:       taskData.VideoOpts.DateFontSize,
 			DatePosition:       taskData.VideoOpts.DatePosition,
+			ShowLogo:           taskData.VideoOpts.ShowLogo,
+			LogoPosition:       taskData.VideoOpts.LogoPosition,
 			FrameDelay:         taskData.VideoOpts.FrameDelay,
 			OutputFormat:       taskData.VideoOpts.OutputFormat,
 			Quality:            taskData.VideoOpts.Quality,
@@ -2841,6 +2867,8 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 			ShowDateOverlay:    task.VideoOpts.ShowDateOverlay,
 			DateFontSize:       task.VideoOpts.DateFontSize,
 			DatePosition:       task.VideoOpts.DatePosition,
+			ShowLogo:           task.VideoOpts.ShowLogo,
+			LogoPosition:       task.VideoOpts.LogoPosition,
 			FrameDelay:         task.VideoOpts.FrameDelay,
 			OutputFormat:       task.VideoOpts.OutputFormat,
 			Quality:            task.VideoOpts.Quality,
@@ -2864,4 +2892,18 @@ func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask,
 
 	log.Printf("[TaskQueue] Task completed: %s", task.ID)
 	return nil
+}
+
+// loadLogoImage loads the embedded logo image for video overlays
+func (a *App) loadLogoImage() (image.Image, error) {
+	if len(logoImageData) == 0 {
+		return nil, fmt.Errorf("logo image not embedded")
+	}
+
+	img, err := png.Decode(bytes.NewReader(logoImageData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode logo: %w", err)
+	}
+
+	return img, nil
 }
