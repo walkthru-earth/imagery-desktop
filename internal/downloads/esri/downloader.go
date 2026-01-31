@@ -380,7 +380,7 @@ func (d *Downloader) DownloadImagery(ctx context.Context, bbox downloads.Boundin
 	// Create tiles directory if saving individual tiles (OGC structure: source_date_z{zoom}_tiles/{z}/{x}/{y}.jpg)
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(d.downloadPath, naming.GenerateTilesDirName("esri", date, zoom))
+		tilesDir = filepath.Join(d.downloadPath, naming.GenerateTilesDirName(common.ProviderEsriWayback, date, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -439,8 +439,8 @@ func (d *Downloader) DownloadImagery(ctx context.Context, bbox downloads.Boundin
 
 		// Save individual tile if requested (OGC structure: source/date/z/x/y.jpg)
 		if format == "tiles" || format == "both" {
-			// Create esri/date/z/x subdirectories
-			sourceDir := filepath.Join(tilesDir, "esri", date)
+			// Create esri_wayback/date/z/x subdirectories
+			sourceDir := filepath.Join(tilesDir, common.ProviderEsriWayback, date)
 			zDir := filepath.Join(sourceDir, fmt.Sprintf("%d", zoom))
 			xDir := filepath.Join(zDir, fmt.Sprintf("%d", result.tile.Column))
 			if err := os.MkdirAll(xDir, 0755); err != nil {
@@ -481,7 +481,7 @@ func (d *Downloader) DownloadImagery(ctx context.Context, bbox downloads.Boundin
 
 	// Track download completion
 	d.trackEvent("download_complete", map[string]interface{}{
-		"source":  "esri",
+		"source":  common.ProviderEsriWayback,
 		"zoom":    zoom,
 		"total":   total,
 		"success": successCount,
@@ -498,7 +498,7 @@ func (d *Downloader) DownloadImagery(ctx context.Context, bbox downloads.Boundin
 		pixelHeight := (originY - endY) / float64(outputHeight)
 
 		// Save as GeoTIFF with embedded projection and rich metadata
-		tifPath := filepath.Join(d.downloadPath, naming.GenerateGeoTIFFFilename("esri", date, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
+		tifPath := filepath.Join(d.downloadPath, naming.GenerateGeoTIFFFilename(common.ProviderEsriWayback, date, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
 
 		// Emit progress for GeoTIFF encoding phase
 		d.emitProgress(downloads.DownloadProgress{

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"imagery-desktop/internal/common"
 	"imagery-desktop/internal/downloads"
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/utils/naming"
@@ -80,7 +81,7 @@ func (d *Downloader) DownloadHistoricalImagery(bbox downloads.BoundingBox, zoom 
 	// Create tiles directory if saving individual tiles (OGC structure)
 	var tilesDir string
 	if format == "tiles" || format == "both" {
-		tilesDir = filepath.Join(d.downloadPath, naming.GenerateTilesDirName("ge_historical", dateStr, zoom))
+		tilesDir = filepath.Join(d.downloadPath, naming.GenerateTilesDirName(common.ProviderGoogleEarth, dateStr, zoom))
 		if err := os.MkdirAll(tilesDir, 0755); err != nil {
 			return fmt.Errorf("failed to create tiles directory: %w", err)
 		}
@@ -247,7 +248,7 @@ func (d *Downloader) saveHistoricalGeoTIFF(outputImg *image.RGBA, bbox downloads
 	pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 
 	// Generate GeoTIFF filename
-	tifPath := filepath.Join(d.downloadPath, naming.GenerateGeoTIFFFilename("ge_historical", dateStr, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
+	tifPath := filepath.Join(d.downloadPath, naming.GenerateGeoTIFFFilename(common.ProviderGoogleEarth, dateStr, bbox.South, bbox.West, bbox.North, bbox.East, zoom))
 
 	// Emit progress for GeoTIFF encoding phase
 	d.emitProgress(downloads.DownloadProgress{

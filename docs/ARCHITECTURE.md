@@ -448,9 +448,9 @@ if successCount > 0 {
 **Output Files**:
 ```
 timelapse_exports/
-├── ge_historical_timelapse_2020-01-01_to_2024-12-31_youtube.mp4
-├── ge_historical_timelapse_2020-01-01_to_2024-12-31_instagram_square.mp4
-├── ge_historical_timelapse_2020-01-01_to_2024-12-31_tiktok.mp4
+├── google_earth_timelapse_2020-01-01_to_2024-12-31_youtube.mp4
+├── google_earth_timelapse_2020-01-01_to_2024-12-31_instagram_square.mp4
+├── google_earth_timelapse_2020-01-01_to_2024-12-31_tiktok.mp4
 └── ...
 ```
 

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"imagery-desktop/internal/common"
 	"imagery-desktop/internal/utils/naming"
 )
 
@@ -278,15 +277,8 @@ func (m *Manager) exportTimelapseInternal(bbox BoundingBox, zoom int, dates []Da
 		m.emitProgress(i, len(dates), (i*100)/len(dates), fmt.Sprintf("Loading frame %d/%d: %s", i+1, len(dates), dateInfo.Date))
 
 		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
-		// Convert provider constants to download filename prefixes
-		downloadSource := source
-		switch source {
-		case common.ProviderGoogleEarth:
-			downloadSource = "ge_historical"
-		case common.ProviderEsriWayback:
-			downloadSource = "esri"
-		}
-		filename := naming.GenerateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox.South, bbox.West, bbox.North, bbox.East, zoom)
+		// Provider constants now match filename prefixes directly
+		filename := naming.GenerateGeoTIFFFilename(source, dateInfo.Date, bbox.South, bbox.West, bbox.North, bbox.East, zoom)
 		basePath := filepath.Join(downloadDir, filename)
 
 		// Try loading PNG first (created as sidecar for better compatibility)
