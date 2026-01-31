@@ -35,6 +35,7 @@ import (
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/imagery"
+	"imagery-desktop/internal/ratelimit"
 	"imagery-desktop/internal/taskqueue"
 	"imagery-desktop/internal/video"
 
@@ -187,7 +188,7 @@ type App struct {
 	ctx               context.Context
 	geClient          *googleearth.Client
 	esriClient        *esri.Client
-	tileCache         *cache.TileCache
+	tileCache         *cache.PersistentTileCache // Changed to PersistentTileCache
 	downloader        *imagery.TileDownloader
 	downloadPath      string
 	tileServerURL     string
@@ -208,6 +209,9 @@ type App struct {
 	// Folder open tracking (to avoid opening duplicate windows on Windows)
 	lastOpenedFolders map[string]time.Time // Map of folder path -> last opened time
 	folderOpenMu      sync.Mutex           // Mutex for folder open tracking
+
+	// Rate limit handling
+	rateLimitHandler *ratelimit.Handler // Rate limit detection and retry
 }
 
 // NewApp creates a new App application struct
@@ -220,18 +224,25 @@ func NewApp() *App {
 	}
 	log.Printf("Settings loaded from: %s", config.GetSettingsPath())
 
-	// Initialize cache with settings
-	cacheDir := cache.GetCacheDir()
-	tileCache, err := cache.NewTileCache(cacheDir, settings.CacheMaxSizeMB)
+	// Initialize persistent tile cache with OGC ZXY structure
+	cachePath := config.GetCachePath(settings)
+	tileCache, err := cache.NewPersistentTileCache(cachePath, settings.CacheMaxSizeMB, settings.CacheTTLDays)
 	if err != nil {
 		log.Printf("Failed to initialize tile cache: %v", err)
 		tileCache = nil // Continue without cache
 	} else {
-		log.Printf("Tile cache initialized at %s (max %d MB)", cacheDir, settings.CacheMaxSizeMB)
+		entries, sizeBytes, maxBytes := tileCache.Stats()
+		log.Printf("Tile cache initialized at %s (%d tiles, %.2f MB / %.2f MB, TTL %d days)",
+			cachePath, entries, float64(sizeBytes)/1024/1024, float64(maxBytes)/1024/1024, settings.CacheTTLDays)
 	}
 
-	// Initialize unified downloader
-	downloader := imagery.NewTileDownloader(DownloadWorkers, tileCache)
+	// Initialize rate limit handler
+	rateLimitHandler := ratelimit.NewHandler(nil) // Use default retry strategy
+	rateLimitHandler.SetAutoRetry(settings.AutoRetryOnRateLimit)
+	log.Printf("Rate limit handler initialized (auto-retry: %v)", settings.AutoRetryOnRateLimit)
+
+	// Initialize unified downloader (pass nil for now, will update cache calls separately)
+	downloader := imagery.NewTileDownloader(DownloadWorkers, nil)
 
 	// Initialize PostHog
 	var phClient posthog.Client
@@ -253,7 +264,7 @@ func NewApp() *App {
 	taskQueue := taskqueue.NewQueueManager(queuePath, settings.MaxConcurrentTasks)
 	log.Printf("Task queue initialized at %s (max concurrent: %d)", queuePath, settings.MaxConcurrentTasks)
 
-	return &App{
+	app := &App{
 		geClient:          googleearth.NewClient(),
 		esriClient:        esri.NewClient(),
 		tileCache:         tileCache,
@@ -263,7 +274,24 @@ func NewApp() *App {
 		phClient:          phClient,
 		taskQueue:         taskQueue,
 		lastOpenedFolders: make(map[string]time.Time),
+		rateLimitHandler:  rateLimitHandler,
 	}
+
+	// Set up rate limit callbacks (will be called when rate limits are detected)
+	rateLimitHandler.SetOnRateLimit(func(event ratelimit.RateLimitEvent) {
+		log.Printf("[RateLimit] %s", event.Message)
+		// Event will be emitted to frontend in startup() after ctx is available
+	})
+
+	rateLimitHandler.SetOnRetry(func(event ratelimit.RateLimitEvent) {
+		log.Printf("[RateLimit] Retrying %s (attempt %d)", event.Provider, event.RetryAttempt+1)
+	})
+
+	rateLimitHandler.SetOnRecovered(func(provider string) {
+		log.Printf("[RateLimit] %s rate limit cleared - downloads resumed", provider)
+	})
+
+	return app
 }
 
 // startup is called when the app starts
@@ -1447,10 +1475,11 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Try cache first
-			cacheKey := fmt.Sprintf("ge:%s:current", tile.Path)
 			var data []byte
 
 			if a.tileCache != nil {
+				// Build cache key using new format: provider:z:x:y
+				cacheKey := fmt.Sprintf("google:%d:%d:%d", tile.Level, tile.Column, tile.Row)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
 				}
@@ -1463,9 +1492,9 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				// Cache the result
+				// Cache the result using OGC ZXY structure
 				if a.tileCache != nil {
-					a.tileCache.Set(cacheKey, data)
+					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, "", data)
 				}
 			}
 
@@ -1839,10 +1868,11 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 			}
 
 			// Try cache first
-			cacheKey := fmt.Sprintf("ge:%s:%s", tile.Path, hexDate)
 			var data []byte
 
 			if a.tileCache != nil {
+				// Build cache key using new format: provider:z:x:y:date
+				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, hexDate)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
 					successCount++
@@ -1857,9 +1887,9 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 					continue
 				}
 
-				// Cache the successful result
+				// Cache the successful result using OGC ZXY structure with date
 				if a.tileCache != nil {
-					a.tileCache.Set(cacheKey, data)
+					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
 				}
 				successCount++
 			}

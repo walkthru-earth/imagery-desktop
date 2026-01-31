@@ -31,8 +31,12 @@ type UserSettings struct {
 	DownloadPath string `json:"downloadPath"`
 
 	// Cache settings
-	CacheMaxSizeMB int `json:"cacheMaxSizeMB"`
-	CacheTTLDays   int `json:"cacheTTLDays"`
+	CachePath      string `json:"cachePath"` // Custom cache location (empty = default)
+	CacheMaxSizeMB int    `json:"cacheMaxSizeMB"`
+	CacheTTLDays   int    `json:"cacheTTLDays"`
+
+	// Rate limit handling
+	AutoRetryOnRateLimit bool `json:"autoRetryOnRateLimit"` // Enable automatic retry on rate limits
 
 	// Default map settings
 	DefaultZoom      int     `json:"defaultZoom"`
@@ -73,9 +77,11 @@ func DefaultSettings() *UserSettings {
 	downloadPath := filepath.Join(homeDir, "Downloads", "imagery")
 
 	return &UserSettings{
-		DownloadPath:         downloadPath,
-		CacheMaxSizeMB:       250,
-		CacheTTLDays:         30,
+		DownloadPath:          downloadPath,
+		CachePath:             "", // Empty = use default app data location
+		CacheMaxSizeMB:        500, // Increased default: 500MB
+		CacheTTLDays:          90,  // Increased default: 90 days
+		AutoRetryOnRateLimit:  true,
 		DefaultZoom:          15,
 		DefaultSource:        "esri",
 		DefaultCenterLat:     30.0621, // Zamalek, Cairo, Egypt
@@ -126,6 +132,25 @@ func GetSettingsPath() string {
 	return filepath.Join(baseDir, "settings.json")
 }
 
+// GetDefaultCachePath returns the default cache directory path
+// Uses OS-specific app data locations with OGC ZXY structure
+func GetDefaultCachePath() string {
+	homeDir, _ := os.UserHomeDir()
+
+	// Use unified directory structure: ~/.walkthru-earth/imagery-desktop/cache/
+	cachePath := filepath.Join(homeDir, ".walkthru-earth", "imagery-desktop", "cache")
+
+	return cachePath
+}
+
+// GetCachePath returns the cache path from settings, or default if not set
+func GetCachePath(settings *UserSettings) string {
+	if settings.CachePath != "" {
+		return settings.CachePath
+	}
+	return GetDefaultCachePath()
+}
+
 // LoadSettings loads user settings from disk
 func LoadSettings() (*UserSettings, error) {
 	settingsPath := GetSettingsPath()
@@ -156,6 +181,7 @@ func LoadSettings() (*UserSettings, error) {
 	if settings.CacheTTLDays == 0 {
 		settings.CacheTTLDays = defaults.CacheTTLDays
 	}
+	// CachePath can be empty (means use default), so don't override it
 	if settings.DefaultZoom == 0 {
 		settings.DefaultZoom = defaults.DefaultZoom
 	}
