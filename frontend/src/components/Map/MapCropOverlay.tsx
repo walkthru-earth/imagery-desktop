@@ -10,7 +10,7 @@ interface MapCropOverlayProps {
   /** Callback when crop changes */
   onChange: (crop: CropPreview) => void;
   /** Container element to render within */
-  containerRef: React.RefObject<HTMLDivElement>;
+  containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
 type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";

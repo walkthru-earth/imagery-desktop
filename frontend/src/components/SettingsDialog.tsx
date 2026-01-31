@@ -24,6 +24,8 @@ interface UserSettings {
   autoOpenDownloadDir: boolean;
   downloadZoomStrategy: "current" | "fixed";
   downloadFixedZoom: number;
+  maxConcurrentTasks: number;
+  taskPanelOpen: boolean;
 }
 
 interface CustomSource {
@@ -497,6 +499,46 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <span className="w-4 h-4 rounded-full border bg-linear-to-br from-white to-slate-950" />
                     System
                   </button>
+                </div>
+              </div>
+
+              {/* Task Queue Settings */}
+              <div className="space-y-3 border-t pt-4">
+                <label className="text-sm font-medium">Export Queue</label>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs text-muted-foreground">Max Concurrent Exports</label>
+                      <span className="text-sm font-mono bg-muted px-2 py-0.5 rounded">
+                        {settings.maxConcurrentTasks || 1}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="5"
+                      step="1"
+                      value={settings.maxConcurrentTasks || 1}
+                      onChange={(e) =>
+                        setSettings({ ...settings, maxConcurrentTasks: parseInt(e.target.value) })
+                      }
+                      className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Number of exports that can run simultaneously (higher = faster but more CPU/memory)
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.taskPanelOpen ?? true}
+                      onChange={(e) =>
+                        setSettings({ ...settings, taskPanelOpen: e.target.checked })
+                      }
+                      className="w-4 h-4 rounded border-border accent-primary"
+                    />
+                    <span className="text-sm">Show task panel by default</span>
+                  </label>
                 </div>
               </div>
 

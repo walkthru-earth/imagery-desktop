@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -19,16 +19,17 @@ import { MainLayout } from "@/components/Layout";
 import { Header } from "@/components/Layout/Header";
 import { MapControls } from "@/components/Map/MapControls";
 import { MapCompare } from "@/components/Map/MapCompare";
-import { AddTaskDialog } from "@/components/AddTaskDialog";
+import { AddTaskPanel } from "@/components/AddTaskPanel";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { TileGridOverlay } from "@/components/Map/TileGridOverlay";
 import { CoordinatesOverlay } from "@/components/Map/CoordinatesOverlay";
+import { MapCropOverlay } from "@/components/Map/MapCropOverlay";
 import { TaskPanel } from "@/components/TaskPanel";
 import { useTheme } from "@/components/ThemeProvider";
 
 // API & Types
 import { api, createBoundingBox } from "@/services/api";
-import { useState } from "react";
+import type { CropPreview } from "@/types";
 
 // RTL text plugin URL for Arabic support
 const RTL_PLUGIN_URL =
@@ -38,9 +39,10 @@ function App() {
   const { theme, setTheme } = useTheme();
   const { state, dispatch } = useImageryContext();
 
-  // Add Task dialog state
-  const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
+  // Add Task panel state
+  const [isAddTaskPanelOpen, setIsAddTaskPanelOpen] = useState(false);
   const [selectedDateRange, setSelectedDateRange] = useState<any[] | null>(null);
+  const [cropPreview, setCropPreview] = useState<CropPreview | null>(null);
 
   // Settings dialog state
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
@@ -316,9 +318,9 @@ function App() {
   // Add Task Handler
   // ===================
   const handleAddTask = async (dateRange?: any[]) => {
-    console.log("Add task triggered - opening dialog", { dateRange });
+    console.log("Add task triggered - opening panel", { dateRange });
     setSelectedDateRange(dateRange || null);
-    setIsAddTaskDialogOpen(true);
+    setIsAddTaskPanelOpen(true);
   };
 
   // Helper to get current map's bbox
@@ -412,7 +414,17 @@ function App() {
           ref={singleMapRef}
           className="absolute inset-0"
           style={{ display: state.viewMode === "single" ? "block" : "none" }}
-        />
+        >
+          {/* Crop overlay for video preview */}
+          {cropPreview && state.viewMode === "single" && (
+            <MapCropOverlay
+              visible={true}
+              crop={cropPreview}
+              onChange={setCropPreview}
+              containerRef={singleMapRef}
+            />
+          )}
+        </div>
 
         {/* Split map view */}
         <div
@@ -446,10 +458,14 @@ function App() {
         {/* Map Controls */}
         <MapControls onAddTask={handleAddTask} />
 
-        {/* Add Task Dialog */}
-        <AddTaskDialog
-          isOpen={isAddTaskDialogOpen}
-          onClose={() => setIsAddTaskDialogOpen(false)}
+        {/* Add Task Panel */}
+        <AddTaskPanel
+          isOpen={isAddTaskPanelOpen}
+          onClose={() => {
+            setIsAddTaskPanelOpen(false);
+            setCropPreview(null);
+          }}
+          onCropChange={setCropPreview}
           {...(getTaskData() || {
             bbox: null,
             zoom: 10,
