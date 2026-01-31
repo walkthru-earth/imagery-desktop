@@ -36,7 +36,7 @@ import {
   GetTaskQueueStatus,
   ClearCompletedTasks,
 } from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
+import { main, taskqueue } from "../../wailsjs/go/models";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
 // Re-export types from models
@@ -171,10 +171,10 @@ export const api = {
     ClearCompletedTasks(),
 
   // Task Queue Events
-  onTaskQueueUpdate: (callback: (status: main.TaskQueueStatus) => void) =>
+  onTaskQueueUpdate: (callback: (status: taskqueue.QueueStatus) => void) =>
     EventsOn("task-queue-update", callback),
 
-  onTaskProgress: (callback: (event: { taskId: string; progress: main.TaskProgress }) => void) =>
+  onTaskProgress: (callback: (event: { taskId: string; progress: taskqueue.TaskProgress }) => void) =>
     EventsOn("task-progress", callback),
 
   onTaskComplete: (callback: (event: { taskId: string; success: boolean; error?: string }) => void) =>
