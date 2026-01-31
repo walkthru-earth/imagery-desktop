@@ -219,11 +219,11 @@ export function MapControls({
   const { state, dispatch } = useImageryContext();
 
   if (state.viewMode === "single") {
-    // Single view - centered at bottom
+    // Single view - centered at bottom (z-40 to be above crop overlay z-30)
     return (
       <div
         className={cn(
-          "absolute bottom-8 left-1/2 -translate-x-1/2 z-10",
+          "absolute bottom-8 left-1/2 -translate-x-1/2 z-40",
           "w-[800px]",
           className
         )}
