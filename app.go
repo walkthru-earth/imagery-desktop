@@ -31,6 +31,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"imagery-desktop/internal/cache"
+	"imagery-desktop/internal/common"
 	"imagery-desktop/internal/config"
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
@@ -415,8 +416,9 @@ func (a *App) GetTileInfo(bbox BoundingBox, zoom int) TileInfo {
 	}
 }
 
-// GetEsriLayers returns available Esri Wayback layers (dates)
-func (a *App) GetEsriLayers() ([]AvailableDate, error) {
+// GetEsriWaybackDatesForArea returns available Esri Wayback dates for a specific area
+// Parameters bbox and zoom are currently unused but match the GetGoogleEarthDatesForArea signature
+func (a *App) GetEsriWaybackDatesForArea(bbox BoundingBox, zoom int) ([]AvailableDate, error) {
 	layers, err := a.esriClient.GetLayers()
 	if err != nil {
 		return nil, err
@@ -716,7 +718,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 
 				// Check cache first
 				if a.tileCache != nil {
-					cacheKey := fmt.Sprintf("esri:%d:%d:%d:%s", zoom, tile.Column, tile.Row, date)
+					cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderEsriWayback, zoom, tile.Column, tile.Row, date)
 					var found bool
 					data, found = a.tileCache.Get(cacheKey)
 					if found {
@@ -731,7 +733,7 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 
 				// Cache the result if successful
 				if err == nil && a.tileCache != nil {
-					a.tileCache.Set("esri", zoom, tile.Column, tile.Row, date, data)
+					a.tileCache.Set(common.ProviderEsriWayback, zoom, tile.Column, tile.Row, date, data)
 				}
 
 				resultChan <- tileResult{tile: tile, data: data, err: err}
@@ -754,31 +756,17 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	}()
 
 	// Find tile bounds for stitching
-	var minCol, maxCol, minRow, maxRow int
-	first := true
-	for _, tile := range tiles {
-		if first {
-			minCol, maxCol = tile.Column, tile.Column
-			minRow, maxRow = tile.Row, tile.Row
-			first = false
-		} else {
-			if tile.Column < minCol {
-				minCol = tile.Column
-			}
-			if tile.Column > maxCol {
-				maxCol = tile.Column
-			}
-			if tile.Row < minRow {
-				minRow = tile.Row
-			}
-			if tile.Row > maxRow {
-				maxRow = tile.Row
-			}
-		}
+	// Convert to common.Tile interface slice
+	commonTiles := make([]common.Tile, len(tiles))
+	for i, t := range tiles {
+		commonTiles[i] = t
 	}
-
-	cols := maxCol - minCol + 1
-	rows := maxRow - minRow + 1
+	bounds, err := common.CalculateTileBounds(commonTiles)
+	if err != nil {
+		return fmt.Errorf("failed to calculate tile bounds: %w", err)
+	}
+	cols := bounds.Cols()
+	rows := bounds.Rows()
 	a.emitLog(fmt.Sprintf("Grid: %d cols x %d rows", cols, rows))
 
 	// Create output image only if we need GeoTIFF
@@ -863,8 +851,8 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 			}
 
 			// Calculate position in output image
-			xOff := (result.tile.Column - minCol) * TileSize
-			yOff := (result.tile.Row - minRow) * TileSize
+			xOff := (result.tile.Column - bounds.MinCol) * TileSize
+			yOff := (result.tile.Row - bounds.MinRow) * TileSize
 
 			// Draw tile onto output image
 			draw.Draw(outputImg, image.Rect(xOff, yOff, xOff+TileSize, yOff+TileSize), img, image.Point{0, 0}, draw.Src)
@@ -887,8 +875,8 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
 		// Calculate georeferencing in Web Mercator (EPSG:3857)
-		originX, originY := esri.TileToWebMercator(minCol, minRow, zoom)
-		endX, endY := esri.TileToWebMercator(maxCol+1, maxRow+1, zoom)
+		originX, originY := esri.TileToWebMercator(bounds.MinCol, bounds.MinRow, zoom)
+		endX, endY := esri.TileToWebMercator(bounds.MaxCol+1, bounds.MaxRow+1, zoom)
 		pixelWidth := (endX - originX) / float64(outputWidth)
 		pixelHeight := (originY - endY) / float64(outputHeight)
 
@@ -1045,31 +1033,17 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	a.emitLog(fmt.Sprintf("Downloading %d tiles...", total))
 
 	// Find tile bounds for stitching
-	var minCol, maxCol, minRow, maxRow int
-	first := true
-	for _, tile := range tiles {
-		if first {
-			minCol, maxCol = tile.Column, tile.Column
-			minRow, maxRow = tile.Row, tile.Row
-			first = false
-		} else {
-			if tile.Column < minCol {
-				minCol = tile.Column
-			}
-			if tile.Column > maxCol {
-				maxCol = tile.Column
-			}
-			if tile.Row < minRow {
-				minRow = tile.Row
-			}
-			if tile.Row > maxRow {
-				maxRow = tile.Row
-			}
-		}
+	// Convert to common.Tile interface slice
+	commonTiles := make([]common.Tile, len(tiles))
+	for i, t := range tiles {
+		commonTiles[i] = t
 	}
-
-	cols := maxCol - minCol + 1
-	rows := maxRow - minRow + 1
+	bounds, err := common.CalculateTileBounds(commonTiles)
+	if err != nil {
+		return fmt.Errorf("failed to calculate tile bounds: %w", err)
+	}
+	cols := bounds.Cols()
+	rows := bounds.Rows()
 	a.emitLog(fmt.Sprintf("Grid: %d cols x %d rows", cols, rows))
 
 	// Create output image only if we need GeoTIFF
@@ -1145,8 +1119,8 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 			// Calculate position in output image
 			// GE rows increase from south to north, but image Y=0 is at top
 			// So we need to invert: higher row numbers go to lower Y positions
-			xOff := (tile.Column - minCol) * TileSize
-			yOff := (maxRow - tile.Row) * TileSize
+			xOff := (tile.Column - bounds.MinCol) * TileSize
+			yOff := (bounds.MaxRow - tile.Row) * TileSize
 
 			// Draw tile onto output image
 			draw.Draw(outputImg, image.Rect(xOff, yOff, xOff+TileSize, yOff+TileSize), img, image.Point{0, 0}, draw.Src)
@@ -1180,10 +1154,10 @@ func (a *App) DownloadGoogleEarthImagery(bbox BoundingBox, zoom int, format stri
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
 		// Calculate georeferencing in Web Mercator (EPSG:3857)
-		// After Y-inversion, image top-left corresponds to (minCol, maxRow+1) in GE coords
-		// Image bottom-right corresponds to (maxCol+1, minRow)
-		originX, originY := googleearth.TileToWebMercator(maxRow+1, minCol, zoom)
-		endX, endY := googleearth.TileToWebMercator(minRow, maxCol+1, zoom)
+		// After Y-inversion, image top-left corresponds to (bounds.MinCol, bounds.MaxRow+1) in GE coords
+		// Image bottom-right corresponds to (bounds.MaxCol+1, bounds.MinRow)
+		originX, originY := googleearth.TileToWebMercator(bounds.MaxRow+1, bounds.MinCol, zoom)
+		endX, endY := googleearth.TileToWebMercator(bounds.MinRow, bounds.MaxCol+1, zoom)
 		pixelWidth := (endX - originX) / float64(outputWidth)
 		pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 
@@ -1418,8 +1392,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 func (a *App) StartTileServer() {
 	// Create a new mux to avoid global state conflicts
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ge/", a.handleGoogleEarthTile)
-	mux.HandleFunc("/ge-historical/", a.handleGoogleEarthHistoricalTile)
+	mux.HandleFunc("/google-earth/", a.handleGoogleEarthTile)
+	mux.HandleFunc("/google-earth-historical/", a.handleGoogleEarthHistoricalTile)
 
 	// Listen on a random available port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1443,21 +1417,21 @@ func (a *App) StartTileServer() {
 }
 
 // handleGoogleEarthTile handles requests for Google Earth tiles
-// URL format: /ge/{date}/{z}/{x}/{y}
+// URL format: /google-earth/{date}/{z}/{x}/{y}
 // date format: YYYY-MM-DD (must be exact date from GetGoogleEarthDatesForArea)
 // This handler reprojects GE tiles (Plate Carrée) to Web Mercator for MapLibre
 func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 	// Parse path components
-	// Expected: /ge/date/z/x/y
+	// Expected: /google-earth/date/z/x/y
 	path := r.URL.Path
-	if len(path) < 4 {
+	if len(path) < 14 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
-	parts := strings.Split(path[4:], "/") // Remove /ge/ prefix
+	parts := strings.Split(path[14:], "/") // Remove /google-earth/ prefix
 	if len(parts) < 4 {
-		http.Error(w, "Invalid path format, expected /ge/{date}/{z}/{x}/{y}", http.StatusBadRequest)
+		http.Error(w, "Invalid path format, expected /google-earth/{date}/{z}/{x}/{y}", http.StatusBadRequest)
 		return
 	}
 
@@ -1504,7 +1478,7 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 
 			// Check cache first
 			if a.tileCache != nil {
-				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, dateStr)
+				cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, dateStr)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
 					if a.devMode {
@@ -1526,7 +1500,7 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 
 				// Cache the result
 				if a.tileCache != nil {
-					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, dateStr, data)
+					a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, dateStr, data)
 				}
 			}
 
@@ -1704,7 +1678,7 @@ func (a *App) extractQuadrantFromFallbackTile(data []byte, origRow, origCol, ori
 func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string) ([]byte, error) {
 	// Check cache first
 	if a.tileCache != nil {
-		cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, date)
+		cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date)
 		if cachedData, found := a.tileCache.Get(cacheKey); found {
 			if a.devMode {
 				log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, date)
@@ -1766,7 +1740,7 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string
 	if err == nil {
 		// Cache the result using human-readable date for OGC compliance
 		if a.tileCache != nil {
-			a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
+			a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
 		}
 		return data, nil
 	}
@@ -1801,7 +1775,7 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string
 		if err == nil {
 			// Cache the result using human-readable date for OGC compliance
 			if a.tileCache != nil {
-				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
+				a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
 			}
 			return data, nil
 		}
@@ -1831,7 +1805,7 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string
 		if err == nil {
 			// Cache the result using human-readable date for OGC compliance
 			if a.tileCache != nil {
-				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
+				a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
 			}
 			return data, nil
 		}
@@ -1841,14 +1815,14 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, date, hexDate string
 }
 
 // handleGoogleEarthHistoricalTile handles requests for historical Google Earth tiles
-// URL format: /ge-historical/{date}_{hexDate}/{z}/{x}/{y}
+// URL format: /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
 // date format: YYYY-MM-DD (for human-readable cache), hexDate: hex string (for tile fetching)
 // This handler reprojects GE tiles (Plate Carrée) to Web Mercator for MapLibre
 func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Request) {
 	// Parse path components
-	// Expected: /ge-historical/{date}_{hexDate}/{z}/{x}/{y}
+	// Expected: /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
 	path := r.URL.Path
-	prefix := "/ge-historical/"
+	prefix := "/google-earth-historical/"
 	if !strings.HasPrefix(path, prefix) {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
@@ -1856,7 +1830,7 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 
 	parts := strings.Split(path[len(prefix):], "/")
 	if len(parts) < 4 {
-		http.Error(w, "Invalid path format, expected /ge-historical/{date}_{hexDate}/{z}/{x}/{y}", http.StatusBadRequest)
+		http.Error(w, "Invalid path format, expected /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}", http.StatusBadRequest)
 		return
 	}
 
@@ -1919,7 +1893,7 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 
 			if a.tileCache != nil {
 				// Build cache key using human-readable date for organized cache structure
-				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, date)
+				cacheKey := fmt.Sprintf("%s:%d:%d:%d:%s", common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
 					successCount++
@@ -1936,7 +1910,7 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 
 				// Cache the successful result using OGC ZXY structure with human-readable date
 				if a.tileCache != nil {
-					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
+					a.tileCache.Set(common.ProviderGoogleEarth, tile.Level, tile.Column, tile.Row, date, data)
 				}
 				successCount++
 			}
@@ -2011,7 +1985,7 @@ func (a *App) GetGoogleEarthTileURL(date string) (string, error) {
 		return "", fmt.Errorf("tile server not started")
 	}
 	// Date must be in YYYY-MM-DD format
-	return fmt.Sprintf("%s/ge/%s/{z}/{x}/{y}", a.tileServerURL, date), nil
+	return fmt.Sprintf("%s/google-earth/%s/{z}/{x}/{y}", a.tileServerURL, date), nil
 }
 
 // GEAvailableDate represents an available Google Earth historical imagery date
@@ -2185,9 +2159,9 @@ func (a *App) GetGoogleEarthHistoricalTileURL(date string, hexDate string, epoch
 	// Note: epoch parameter kept for API compatibility but not used in URL
 	// Each tile looks up its own epoch from the quadtree
 	// Use regular date format (YYYY-MM-DD) in URL for human-readable cache structure
-	// Format: /ge-historical/{date}_{hexDate}/{z}/{x}/{y}
+	// Format: /google-earth-historical/{date}_{hexDate}/{z}/{x}/{y}
 	// This allows the handler to extract both date (for caching) and hexDate (for fetching)
-	return fmt.Sprintf("%s/ge-historical/%s_%s/{z}/{x}/{y}", a.tileServerURL, date, hexDate), nil
+	return fmt.Sprintf("%s/google-earth-historical/%s_%s/{z}/{x}/{y}", a.tileServerURL, date, hexDate), nil
 }
 
 // DownloadGoogleEarthHistoricalImagery downloads historical Google Earth imagery for a bounding box
@@ -2209,31 +2183,17 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 	a.emitLog(fmt.Sprintf("Downloading %d tiles...", total))
 
 	// Find tile bounds for stitching
-	var minCol, maxCol, minRow, maxRow int
-	first := true
-	for _, tile := range tiles {
-		if first {
-			minCol, maxCol = tile.Column, tile.Column
-			minRow, maxRow = tile.Row, tile.Row
-			first = false
-		} else {
-			if tile.Column < minCol {
-				minCol = tile.Column
-			}
-			if tile.Column > maxCol {
-				maxCol = tile.Column
-			}
-			if tile.Row < minRow {
-				minRow = tile.Row
-			}
-			if tile.Row > maxRow {
-				maxRow = tile.Row
-			}
-		}
+	// Convert to common.Tile interface slice
+	commonTiles := make([]common.Tile, len(tiles))
+	for i, t := range tiles {
+		commonTiles[i] = t
 	}
-
-	cols := maxCol - minCol + 1
-	rows := maxRow - minRow + 1
+	bounds, err := common.CalculateTileBounds(commonTiles)
+	if err != nil {
+		return fmt.Errorf("failed to calculate tile bounds: %w", err)
+	}
+	cols := bounds.Cols()
+	rows := bounds.Rows()
 	a.emitLog(fmt.Sprintf("Grid: %d cols x %d rows", cols, rows))
 
 	// Create output image only if we need GeoTIFF
@@ -2364,8 +2324,8 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 			}
 
 			// Calculate position in output image
-			xOff := (result.tile.Column - minCol) * TileSize
-			yOff := (maxRow - result.tile.Row) * TileSize
+			xOff := (result.tile.Column - bounds.MinCol) * TileSize
+			yOff := (bounds.MaxRow - result.tile.Row) * TileSize
 
 			// Draw tile onto output image (thread-safe since each tile writes to different location)
 			draw.Draw(outputImg, image.Rect(xOff, yOff, xOff+TileSize, yOff+TileSize), img, image.Point{0, 0}, draw.Src)
@@ -2400,10 +2360,10 @@ func (a *App) DownloadGoogleEarthHistoricalImagery(bbox BoundingBox, zoom int, h
 	// Save GeoTIFF if requested
 	if format == "geotiff" || format == "both" {
 		// Calculate georeferencing in Web Mercator (EPSG:3857)
-		// After Y-inversion, image top-left corresponds to (minCol, maxRow+1) in GE coords
-		// Image bottom-right corresponds to (maxCol+1, minRow)
-		originX, originY := googleearth.TileToWebMercator(maxRow+1, minCol, zoom)
-		endX, endY := googleearth.TileToWebMercator(minRow, maxCol+1, zoom)
+		// After Y-inversion, image top-left corresponds to (bounds.MinCol, bounds.MaxRow+1) in GE coords
+		// Image bottom-right corresponds to (bounds.MaxCol+1, bounds.MinRow)
+		originX, originY := googleearth.TileToWebMercator(bounds.MaxRow+1, bounds.MinCol, zoom)
+		endX, endY := googleearth.TileToWebMercator(bounds.MinRow, bounds.MaxCol+1, zoom)
 		pixelWidth := (endX - originX) / float64(outputWidth)
 		pixelHeight := (endY - originY) / float64(outputHeight) // Will be negative (Y decreases going down)
 

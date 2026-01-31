@@ -5,7 +5,7 @@
 
 import {
   GetTileInfo,
-  GetEsriLayers,
+  GetEsriWaybackDatesForArea,
   GetEsriTileURL,
   GetGoogleEarthTileURL,
   GetGoogleEarthDatesForArea,
@@ -56,8 +56,8 @@ export const api = {
     GetTileInfo(bbox, zoom),
 
   // Esri Wayback
-  getEsriLayers: () =>
-    GetEsriLayers(),
+  getEsriWaybackDatesForArea: (bbox: main.BoundingBox, zoom: number) =>
+    GetEsriWaybackDatesForArea(bbox, zoom),
 
   getEsriTileURL: (date: string) =>
     GetEsriTileURL(date),
