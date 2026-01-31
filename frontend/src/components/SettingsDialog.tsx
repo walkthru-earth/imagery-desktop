@@ -565,7 +565,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   <select
                     value={settings.theme || 'system'}
                     onChange={(e) => {
-                      const newTheme = e.target.value;
+                      const newTheme = e.target.value as "light" | "dark" | "system";
                       setTheme(newTheme);
                       setSettings({ ...settings, theme: newTheme });
                     }}
