@@ -39,27 +39,24 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
 
   return (
     <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
-      <CardContent className="p-2 space-y-2">
-        {/* Add Task Button - Centered and prominent */}
-        {onAddTask && dates.length > 0 && (
-          <Button
-            size="default"
-            variant={isRangeMode ? "default" : "secondary"}
-            onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
-            title={isRangeMode ? "Add task for date range" : "Add task for current view"}
-            className="w-full"
-          >
-            <ListPlus className="h-5 w-5 mr-2" />
-            {isRangeMode ? (
-              <span>Add {Math.abs(rangeEnd - rangeStart) + 1} Dates to Queue</span>
-            ) : (
-              <span>Add to Queue</span>
-            )}
-          </Button>
-        )}
-
-        {/* Source Selector and Range Toggle */}
+      <CardContent className="p-2 space-y-1">
+        {/* Source Selector, Range Toggle, and Add Task */}
         <div className="flex gap-2 items-center">
+          {onAddTask && dates.length > 0 && (
+            <Button
+              size="default"
+              variant={isRangeMode ? "default" : "outline"}
+              onClick={() => isRangeMode ? handleAddTaskRange() : onAddTask()}
+              title={isRangeMode ? "Add task for date range" : "Add task for current view"}
+            >
+              <ListPlus className="h-5 w-5" />
+              {isRangeMode && (
+                <span className="ml-1.5 text-sm font-medium">
+                  {Math.abs(rangeEnd - rangeStart) + 1}
+                </span>
+              )}
+            </Button>
+          )}
           <SourceSelector
             value={mapState.source}
             onChange={(source) => {
