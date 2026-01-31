@@ -2329,7 +2329,12 @@ func (a *App) ExportTimelapseVideo(bbox BoundingBox, zoom int, dates []GEDateInf
 		})
 
 		// Construct GeoTIFF path using same generateGeoTIFFFilename function as downloads
-		filename := generateGeoTIFFFilename(source, dateInfo.Date, bbox, zoom)
+		// Convert source to match download naming convention
+		downloadSource := source
+		if source == "google" || source == "ge" {
+			downloadSource = "ge_historical"
+		}
+		filename := generateGeoTIFFFilename(downloadSource, dateInfo.Date, bbox, zoom)
 		basePath := filepath.Join(downloadDir, filename)
 
 		// Try loading PNG first (created as sidecar for better compatibility)
