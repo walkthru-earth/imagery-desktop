@@ -78,9 +78,9 @@ type ExportTask struct {
 	Name        string     `json:"name"`
 	Status      TaskStatus `json:"status"`
 	Priority    int        `json:"priority"`    // Higher = more urgent (default 0)
-	CreatedAt   time.Time  `json:"createdAt"`
-	StartedAt   *time.Time `json:"startedAt,omitempty"`
-	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	CreatedAt   string     `json:"createdAt"`   // ISO 8601 format
+	StartedAt   string     `json:"startedAt,omitempty"`
+	CompletedAt string     `json:"completedAt,omitempty"`
 
 	// Export settings
 	Source string      `json:"source"` // "esri" or "google"
@@ -115,7 +115,7 @@ func NewExportTask(name string, source string, bbox BoundingBox, zoom int, dates
 		Name:      name,
 		Status:    TaskStatusPending,
 		Priority:  0,
-		CreatedAt: time.Now(),
+		CreatedAt: time.Now().Format(time.RFC3339),
 		Source:    source,
 		BBox:      bbox,
 		Zoom:      zoom,
@@ -198,15 +198,13 @@ func (t *ExportTask) UpdateProgress(phase string, currentDate, totalDates, tiles
 
 // MarkStarted marks the task as started
 func (t *ExportTask) MarkStarted() {
-	now := time.Now()
-	t.StartedAt = &now
+	t.StartedAt = time.Now().Format(time.RFC3339)
 	t.Status = TaskStatusRunning
 }
 
 // MarkCompleted marks the task as completed
 func (t *ExportTask) MarkCompleted(outputPath string) {
-	now := time.Now()
-	t.CompletedAt = &now
+	t.CompletedAt = time.Now().Format(time.RFC3339)
 	t.Status = TaskStatusCompleted
 	t.OutputPath = outputPath
 	t.Progress.Percent = 100
@@ -214,8 +212,7 @@ func (t *ExportTask) MarkCompleted(outputPath string) {
 
 // MarkFailed marks the task as failed with an error
 func (t *ExportTask) MarkFailed(err error) {
-	now := time.Now()
-	t.CompletedAt = &now
+	t.CompletedAt = time.Now().Format(time.RFC3339)
 	t.Status = TaskStatusFailed
 	if err != nil {
 		t.Error = err.Error()
@@ -224,7 +221,6 @@ func (t *ExportTask) MarkFailed(err error) {
 
 // MarkCancelled marks the task as cancelled
 func (t *ExportTask) MarkCancelled() {
-	now := time.Now()
-	t.CompletedAt = &now
+	t.CompletedAt = time.Now().Format(time.RFC3339)
 	t.Status = TaskStatusCancelled
 }

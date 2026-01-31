@@ -2511,7 +2511,9 @@ func convertTaskToFrontend(t *taskqueue.ExportTask) TaskQueueExportTask {
 		Name:        t.Name,
 		Status:      string(t.Status),
 		Priority:    t.Priority,
-		CreatedAt:   t.CreatedAt.Format(time.RFC3339),
+		CreatedAt:   t.CreatedAt,   // Already a string (RFC3339)
+		StartedAt:   t.StartedAt,   // Already a string (RFC3339)
+		CompletedAt: t.CompletedAt, // Already a string (RFC3339)
 		Source:      t.Source,
 		BBox:        BoundingBox(t.BBox),
 		Zoom:        t.Zoom,
@@ -2553,14 +2555,6 @@ func convertTaskToFrontend(t *taskqueue.ExportTask) TaskQueueExportTask {
 			OutputFormat:       t.VideoOpts.OutputFormat,
 			Quality:            t.VideoOpts.Quality,
 		}
-	}
-
-	// Format timestamps
-	if t.StartedAt != nil {
-		result.StartedAt = t.StartedAt.Format(time.RFC3339)
-	}
-	if t.CompletedAt != nil {
-		result.CompletedAt = t.CompletedAt.Format(time.RFC3339)
 	}
 
 	return result
