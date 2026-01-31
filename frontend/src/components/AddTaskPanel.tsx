@@ -30,6 +30,7 @@ export interface AddTaskPanelProps {
   singleEpoch?: number;
   dateRange?: Array<{ date: string; hexDate?: string; epoch?: number }>;
   onCropChange?: (crop: CropPreview | null) => void;
+  onTaskAdded?: () => void;
 }
 
 const VIDEO_PRESETS = [
@@ -62,6 +63,7 @@ export function AddTaskPanel({
   singleEpoch,
   dateRange,
   onCropChange,
+  onTaskAdded,
 }: AddTaskPanelProps) {
   const isRangeMode = !!dateRange && dateRange.length > 1;
 
@@ -200,6 +202,7 @@ export function AddTaskPanel({
       });
 
       await api.addExportTask(task);
+      onTaskAdded?.();
       onClose();
 
       const status = await api.getTaskQueueStatus();

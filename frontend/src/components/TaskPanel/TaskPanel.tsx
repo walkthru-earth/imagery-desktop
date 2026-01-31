@@ -20,9 +20,10 @@ interface TaskPanelProps {
   onToggle: () => void;
   onTaskSelect?: (task: ExportTask) => void;
   onAddTask?: () => void;
+  refreshTrigger?: number;
 }
 
-export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask }: TaskPanelProps) {
+export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask, refreshTrigger }: TaskPanelProps) {
   const [tasks, setTasks] = useState<ExportTask[]>([]);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,6 +48,13 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask }: TaskPan
       setIsLoading(false);
     }
   }, []);
+
+  // Refresh when trigger changes (e.g., after adding a task)
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      loadTasks();
+    }
+  }, [refreshTrigger, loadTasks]);
 
   useEffect(() => {
     loadTasks();

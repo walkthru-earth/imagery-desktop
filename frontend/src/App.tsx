@@ -49,6 +49,7 @@ function App() {
 
   // Task panel state
   const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(true);
+  const [taskPanelRefreshTrigger, setTaskPanelRefreshTrigger] = useState(0);
 
   // Effective theme (resolve "system" to actual light/dark)
   const effectiveTheme =
@@ -464,6 +465,7 @@ function App() {
             setCropPreview(null);
           }}
           onCropChange={setCropPreview}
+          onTaskAdded={() => setTaskPanelRefreshTrigger(prev => prev + 1)}
           {...(getTaskData() || {
             bbox: null,
             zoom: 10,
@@ -496,6 +498,7 @@ function App() {
           isOpen={isTaskPanelOpen}
           onToggle={() => setIsTaskPanelOpen(!isTaskPanelOpen)}
           onAddTask={() => handleAddTask()}
+          refreshTrigger={taskPanelRefreshTrigger}
         />
       </div>
     </MainLayout>
