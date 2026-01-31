@@ -22,6 +22,19 @@ import {
   SetDownloadPath,
   OpenDownloadFolder,
   StartTileServer,
+  // Task Queue API
+  AddExportTask,
+  GetTaskQueue,
+  GetTask,
+  UpdateTask,
+  DeleteTask,
+  StartTaskQueue,
+  PauseTaskQueue,
+  StopTaskQueue,
+  CancelTask,
+  ReorderTask,
+  GetTaskQueueStatus,
+  ClearCompletedTasks,
 } from "../../wailsjs/go/main/App";
 import { main } from "../../wailsjs/go/models";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
@@ -119,4 +132,54 @@ export const api = {
 
   onLog: (callback: (log: string) => void) =>
     EventsOn("log", callback),
+
+  // Task Queue API
+  addExportTask: (task: main.TaskQueueExportTask) =>
+    AddExportTask(task),
+
+  getTaskQueue: () =>
+    GetTaskQueue(),
+
+  getTask: (id: string) =>
+    GetTask(id),
+
+  updateTask: (id: string, updates: Record<string, any>) =>
+    UpdateTask(id, updates),
+
+  deleteTask: (id: string) =>
+    DeleteTask(id),
+
+  startTaskQueue: () =>
+    StartTaskQueue(),
+
+  pauseTaskQueue: () =>
+    PauseTaskQueue(),
+
+  stopTaskQueue: () =>
+    StopTaskQueue(),
+
+  cancelTask: (id: string) =>
+    CancelTask(id),
+
+  reorderTask: (id: string, newIndex: number) =>
+    ReorderTask(id, newIndex),
+
+  getTaskQueueStatus: () =>
+    GetTaskQueueStatus(),
+
+  clearCompletedTasks: () =>
+    ClearCompletedTasks(),
+
+  // Task Queue Events
+  onTaskQueueUpdate: (callback: (status: main.TaskQueueStatus) => void) =>
+    EventsOn("task-queue-update", callback),
+
+  onTaskProgress: (callback: (event: { taskId: string; progress: main.TaskProgress }) => void) =>
+    EventsOn("task-progress", callback),
+
+  onTaskComplete: (callback: (event: { taskId: string; success: boolean; error?: string }) => void) =>
+    EventsOn("task-complete", callback),
+
+  onSystemNotification: (callback: (notification: { title: string; message: string; type: string }) => void) =>
+    EventsOn("system-notification", callback),
 };

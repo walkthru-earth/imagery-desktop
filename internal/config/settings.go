@@ -56,6 +56,10 @@ type UserSettings struct {
 	ShowTileGrid        bool   `json:"showTileGrid"`
 	ShowCoordinates     bool   `json:"showCoordinates"`
 	AutoOpenDownloadDir bool   `json:"autoOpenDownloadDir"`
+
+	// Task queue settings
+	MaxConcurrentTasks int  `json:"maxConcurrentTasks"` // 1-5, default 1
+	TaskPanelOpen      bool `json:"taskPanelOpen"`      // Whether task panel is expanded
 }
 
 // DefaultSettings returns default user settings
@@ -96,6 +100,8 @@ func DefaultSettings() *UserSettings {
 		ShowTileGrid:        false,
 		ShowCoordinates:     false,
 		AutoOpenDownloadDir: true,
+		MaxConcurrentTasks:  1,
+		TaskPanelOpen:       true,
 	}
 }
 
@@ -156,6 +162,16 @@ func LoadSettings() (*UserSettings, error) {
 	}
 	if settings.DownloadFixedZoom == 0 {
 		settings.DownloadFixedZoom = defaults.DownloadFixedZoom
+	}
+	if settings.MaxConcurrentTasks == 0 {
+		settings.MaxConcurrentTasks = defaults.MaxConcurrentTasks
+	}
+	// Clamp MaxConcurrentTasks to valid range
+	if settings.MaxConcurrentTasks < 1 {
+		settings.MaxConcurrentTasks = 1
+	}
+	if settings.MaxConcurrentTasks > 5 {
+		settings.MaxConcurrentTasks = 5
 	}
 
 	return &settings, nil

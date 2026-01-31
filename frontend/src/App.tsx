@@ -23,6 +23,7 @@ import { ExportDialog } from "@/components/ExportDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { TileGridOverlay } from "@/components/Map/TileGridOverlay";
 import { CoordinatesOverlay } from "@/components/Map/CoordinatesOverlay";
+import { TaskPanel } from "@/components/TaskPanel";
 import { useTheme } from "@/components/ThemeProvider";
 
 // API & Types
@@ -43,6 +44,9 @@ function App() {
 
   // Settings dialog state
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+
+  // Task panel state
+  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(true);
 
   // Effective theme (resolve "system" to actual light/dark)
   const effectiveTheme =
@@ -88,6 +92,10 @@ function App() {
         // Sync theme from backend settings
         if (s.theme) {
           setTheme(s.theme);
+        }
+        // Sync task panel state from settings
+        if (s.taskPanelOpen !== undefined) {
+          setIsTaskPanelOpen(s.taskPanelOpen);
         }
       }
     } catch (err) {
@@ -473,6 +481,12 @@ function App() {
         <TileGridOverlay map={singleMap} visible={settings?.showTileGrid ?? false} />
         <TileGridOverlay map={leftMap} visible={settings?.showTileGrid ?? false} />
         <TileGridOverlay map={rightMap} visible={settings?.showTileGrid ?? false} />
+
+        {/* Task Panel */}
+        <TaskPanel
+          isOpen={isTaskPanelOpen}
+          onToggle={() => setIsTaskPanelOpen(!isTaskPanelOpen)}
+        />
       </div>
     </MainLayout>
   );

@@ -50,3 +50,100 @@ export interface TimelineState {
   loop: boolean;
   currentIndex: number;
 }
+
+// ============================================================================
+// Task Queue Types
+// ============================================================================
+
+// Task Status
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+// Task Progress
+export interface TaskProgress {
+  currentPhase: string; // "downloading", "merging", "encoding"
+  totalDates: number;
+  currentDate: number;
+  tilesTotal: number;
+  tilesCompleted: number;
+  percent: number;
+}
+
+// Crop Preview (relative 0-1 coords for map overlay)
+export interface CropPreview {
+  x: number;      // Left position (0-1)
+  y: number;      // Top position (0-1)
+  width: number;  // Width (0-1)
+  height: number; // Height (0-1)
+}
+
+// Video Export Options
+export interface VideoExportOptions {
+  width: number;
+  height: number;
+  preset: string;
+  cropX: number;
+  cropY: number;
+  spotlightEnabled: boolean;
+  spotlightCenterLat: number;
+  spotlightCenterLon: number;
+  spotlightRadiusKm: number;
+  overlayOpacity: number;
+  showDateOverlay: boolean;
+  dateFontSize: number;
+  datePosition: string;
+  frameDelay: number;
+  outputFormat: string;
+  quality: number;
+}
+
+// Export Task
+export interface ExportTask {
+  id: string;
+  name: string;
+  status: TaskStatus;
+  priority: number;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  source: string;
+  bbox: BoundingBox;
+  zoom: number;
+  format: string;
+  dates: GEDateInfo[];
+  videoExport: boolean;
+  videoOpts?: VideoExportOptions;
+  cropPreview?: CropPreview;
+  progress: TaskProgress;
+  error?: string;
+  outputPath?: string;
+}
+
+// Queue Status
+export interface QueueStatus {
+  isRunning: boolean;
+  isPaused: boolean;
+  currentTaskID: string;
+  totalTasks: number;
+  completedTasks: number;
+  pendingTasks: number;
+}
+
+// Task Progress Event
+export interface TaskProgressEvent {
+  taskId: string;
+  progress: TaskProgress;
+}
+
+// Task Complete Event
+export interface TaskCompleteEvent {
+  taskId: string;
+  success: boolean;
+  error?: string;
+}
+
+// System Notification
+export interface SystemNotification {
+  title: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}

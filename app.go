@@ -33,6 +33,7 @@ import (
 	"imagery-desktop/internal/esri"
 	"imagery-desktop/internal/googleearth"
 	"imagery-desktop/internal/imagery"
+	"imagery-desktop/internal/taskqueue"
 	"imagery-desktop/internal/video"
 
 	_ "golang.org/x/image/tiff" // Register TIFF decoder for GeoTIFF loading
@@ -189,6 +190,7 @@ type App struct {
 	inRangeDownload   bool // Track if we're downloading a date range (suppress per-tile progress)
 	currentDateIndex  int  // Current date being processed in range download
 	totalDatesInRange int  // Total dates in range download
+	taskQueue         *taskqueue.QueueManager // Task queue for background exports
 }
 
 // NewApp creates a new App application struct
@@ -228,6 +230,12 @@ func NewApp() *App {
 		}
 	}
 
+	// Initialize task queue
+	homeDir, _ := os.UserHomeDir()
+	queuePath := filepath.Join(homeDir, ".walkthru-earth", "imagery-desktop", "queue")
+	taskQueue := taskqueue.NewQueueManager(queuePath, settings.MaxConcurrentTasks)
+	log.Printf("Task queue initialized at %s (max concurrent: %d)", queuePath, settings.MaxConcurrentTasks)
+
 	return &App{
 		geClient:     googleearth.NewClient(),
 		esriClient:   esri.NewClient(),
@@ -236,6 +244,7 @@ func NewApp() *App {
 		downloadPath: settings.DownloadPath,
 		settings:     settings,
 		phClient:     phClient,
+		taskQueue:    taskQueue,
 	}
 }
 
@@ -266,6 +275,38 @@ func (a *App) startup(ctx context.Context) {
 	// Start local tile server
 	go a.StartTileServer()
 
+	// Set up task queue callbacks and executor
+	a.taskQueue.SetExecutor(a)
+	a.taskQueue.SetCallbacks(
+		func(status taskqueue.QueueStatus) {
+			wailsRuntime.EventsEmit(ctx, "task-queue-update", status)
+		},
+		func(taskID string, progress taskqueue.TaskProgress) {
+			wailsRuntime.EventsEmit(ctx, "task-progress", map[string]interface{}{
+				"taskId":   taskID,
+				"progress": progress,
+			})
+		},
+		func(taskID string, success bool, err error) {
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+			}
+			wailsRuntime.EventsEmit(ctx, "task-complete", map[string]interface{}{
+				"taskId":  taskID,
+				"success": success,
+				"error":   errStr,
+			})
+		},
+		func(title, message, notifType string) {
+			wailsRuntime.EventsEmit(ctx, "system-notification", map[string]interface{}{
+				"title":   title,
+				"message": message,
+				"type":    notifType,
+			})
+		},
+	)
+
 	// Track app start
 	a.TrackEvent("app_started", map[string]interface{}{
 		"version": a.GetAppVersion(),
@@ -291,6 +332,9 @@ func (a *App) TrackEvent(event string, props map[string]interface{}) {
 
 // Shutdown cleans up resources
 func (a *App) Shutdown(ctx context.Context) {
+	if a.taskQueue != nil {
+		a.taskQueue.Close()
+	}
 	if a.phClient != nil {
 		a.phClient.Close()
 	}
@@ -2432,4 +2476,318 @@ func (a *App) calculateSpotlightPixels(bbox BoundingBox, zoom int, centerLat, ce
 		Width:  spotlightRadiusPixels * 2,
 		Height: spotlightRadiusPixels * 2,
 	}
+}
+
+// ============================================================================
+// Task Queue API Methods
+// ============================================================================
+
+// TaskQueueExportTask is the frontend-facing export task structure
+type TaskQueueExportTask struct {
+	ID          string                        `json:"id"`
+	Name        string                        `json:"name"`
+	Status      string                        `json:"status"`
+	Priority    int                           `json:"priority"`
+	CreatedAt   string                        `json:"createdAt"`
+	StartedAt   string                        `json:"startedAt,omitempty"`
+	CompletedAt string                        `json:"completedAt,omitempty"`
+	Source      string                        `json:"source"`
+	BBox        BoundingBox                   `json:"bbox"`
+	Zoom        int                           `json:"zoom"`
+	Format      string                        `json:"format"`
+	Dates       []GEDateInfo                  `json:"dates"`
+	VideoExport bool                          `json:"videoExport"`
+	VideoOpts   *VideoExportOptions           `json:"videoOpts,omitempty"`
+	CropPreview *taskqueue.CropPreview        `json:"cropPreview,omitempty"`
+	Progress    taskqueue.TaskProgress        `json:"progress"`
+	Error       string                        `json:"error,omitempty"`
+	OutputPath  string                        `json:"outputPath,omitempty"`
+}
+
+// convertTaskToFrontend converts internal task to frontend format
+func convertTaskToFrontend(t *taskqueue.ExportTask) TaskQueueExportTask {
+	result := TaskQueueExportTask{
+		ID:          t.ID,
+		Name:        t.Name,
+		Status:      string(t.Status),
+		Priority:    t.Priority,
+		CreatedAt:   t.CreatedAt.Format(time.RFC3339),
+		Source:      t.Source,
+		BBox:        BoundingBox(t.BBox),
+		Zoom:        t.Zoom,
+		Format:      t.Format,
+		VideoExport: t.VideoExport,
+		CropPreview: t.CropPreview,
+		Progress:    t.Progress,
+		Error:       t.Error,
+		OutputPath:  t.OutputPath,
+	}
+
+	// Convert dates
+	result.Dates = make([]GEDateInfo, len(t.Dates))
+	for i, d := range t.Dates {
+		result.Dates[i] = GEDateInfo{
+			Date:    d.Date,
+			HexDate: d.HexDate,
+			Epoch:   d.Epoch,
+		}
+	}
+
+	// Convert video options
+	if t.VideoOpts != nil {
+		result.VideoOpts = &VideoExportOptions{
+			Width:              t.VideoOpts.Width,
+			Height:             t.VideoOpts.Height,
+			Preset:             t.VideoOpts.Preset,
+			CropX:              t.VideoOpts.CropX,
+			CropY:              t.VideoOpts.CropY,
+			SpotlightEnabled:   t.VideoOpts.SpotlightEnabled,
+			SpotlightCenterLat: t.VideoOpts.SpotlightCenterLat,
+			SpotlightCenterLon: t.VideoOpts.SpotlightCenterLon,
+			SpotlightRadiusKm:  t.VideoOpts.SpotlightRadiusKm,
+			OverlayOpacity:     t.VideoOpts.OverlayOpacity,
+			ShowDateOverlay:    t.VideoOpts.ShowDateOverlay,
+			DateFontSize:       t.VideoOpts.DateFontSize,
+			DatePosition:       t.VideoOpts.DatePosition,
+			FrameDelay:         t.VideoOpts.FrameDelay,
+			OutputFormat:       t.VideoOpts.OutputFormat,
+			Quality:            t.VideoOpts.Quality,
+		}
+	}
+
+	// Format timestamps
+	if t.StartedAt != nil {
+		result.StartedAt = t.StartedAt.Format(time.RFC3339)
+	}
+	if t.CompletedAt != nil {
+		result.CompletedAt = t.CompletedAt.Format(time.RFC3339)
+	}
+
+	return result
+}
+
+// AddExportTask adds a new export task to the queue
+func (a *App) AddExportTask(taskData TaskQueueExportTask) (string, error) {
+	// Convert dates
+	dates := make([]taskqueue.GEDateInfo, len(taskData.Dates))
+	for i, d := range taskData.Dates {
+		dates[i] = taskqueue.GEDateInfo{
+			Date:    d.Date,
+			HexDate: d.HexDate,
+			Epoch:   d.Epoch,
+		}
+	}
+
+	// Create task
+	task := taskqueue.NewExportTask(
+		taskData.Name,
+		taskData.Source,
+		taskqueue.BoundingBox(taskData.BBox),
+		taskData.Zoom,
+		dates,
+	)
+
+	task.Format = taskData.Format
+	task.Priority = taskData.Priority
+	task.VideoExport = taskData.VideoExport
+	task.CropPreview = taskData.CropPreview
+
+	// Convert video options
+	if taskData.VideoOpts != nil {
+		task.VideoOpts = &taskqueue.VideoExportOptions{
+			Width:              taskData.VideoOpts.Width,
+			Height:             taskData.VideoOpts.Height,
+			Preset:             taskData.VideoOpts.Preset,
+			CropX:              taskData.VideoOpts.CropX,
+			CropY:              taskData.VideoOpts.CropY,
+			SpotlightEnabled:   taskData.VideoOpts.SpotlightEnabled,
+			SpotlightCenterLat: taskData.VideoOpts.SpotlightCenterLat,
+			SpotlightCenterLon: taskData.VideoOpts.SpotlightCenterLon,
+			SpotlightRadiusKm:  taskData.VideoOpts.SpotlightRadiusKm,
+			OverlayOpacity:     taskData.VideoOpts.OverlayOpacity,
+			ShowDateOverlay:    taskData.VideoOpts.ShowDateOverlay,
+			DateFontSize:       taskData.VideoOpts.DateFontSize,
+			DatePosition:       taskData.VideoOpts.DatePosition,
+			FrameDelay:         taskData.VideoOpts.FrameDelay,
+			OutputFormat:       taskData.VideoOpts.OutputFormat,
+			Quality:            taskData.VideoOpts.Quality,
+		}
+	}
+
+	if err := a.taskQueue.AddTask(task); err != nil {
+		return "", err
+	}
+
+	return task.ID, nil
+}
+
+// GetTaskQueue returns all tasks in the queue
+func (a *App) GetTaskQueue() ([]TaskQueueExportTask, error) {
+	tasks := a.taskQueue.GetAllTasks()
+	result := make([]TaskQueueExportTask, len(tasks))
+	for i, t := range tasks {
+		result[i] = convertTaskToFrontend(t)
+	}
+	return result, nil
+}
+
+// GetTask returns a single task by ID
+func (a *App) GetTask(id string) (*TaskQueueExportTask, error) {
+	task, err := a.taskQueue.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	result := convertTaskToFrontend(task)
+	return &result, nil
+}
+
+// UpdateTask updates a task's properties
+func (a *App) UpdateTask(id string, updates map[string]interface{}) error {
+	return a.taskQueue.UpdateTask(id, updates)
+}
+
+// DeleteTask removes a task from the queue
+func (a *App) DeleteTask(id string) error {
+	return a.taskQueue.DeleteTask(id)
+}
+
+// StartTaskQueue begins processing tasks
+func (a *App) StartTaskQueue() error {
+	return a.taskQueue.StartQueue()
+}
+
+// PauseTaskQueue pauses the queue after the current task completes
+func (a *App) PauseTaskQueue() error {
+	return a.taskQueue.PauseQueue()
+}
+
+// StopTaskQueue stops the queue immediately
+func (a *App) StopTaskQueue() {
+	a.taskQueue.StopQueue()
+}
+
+// CancelTask cancels a running or pending task
+func (a *App) CancelTask(id string) error {
+	return a.taskQueue.CancelTask(id)
+}
+
+// ReorderTask moves a task to a new position in the queue
+func (a *App) ReorderTask(id string, newIndex int) error {
+	return a.taskQueue.ReorderTask(id, newIndex)
+}
+
+// GetTaskQueueStatus returns the current queue status
+func (a *App) GetTaskQueueStatus() taskqueue.QueueStatus {
+	return a.taskQueue.GetStatus()
+}
+
+// ClearCompletedTasks removes all completed/failed/cancelled tasks
+func (a *App) ClearCompletedTasks() {
+	a.taskQueue.ClearCompleted()
+}
+
+// ExecuteExportTask implements the TaskExecutor interface
+// This is called by the queue worker to actually perform the export
+func (a *App) ExecuteExportTask(ctx context.Context, task *taskqueue.ExportTask, progressChan chan<- taskqueue.TaskProgress) error {
+	log.Printf("[TaskQueue] Executing task: %s - %s", task.ID, task.Name)
+
+	// Convert types for internal use
+	bbox := BoundingBox(task.BBox)
+	dates := make([]GEDateInfo, len(task.Dates))
+	for i, d := range task.Dates {
+		dates[i] = GEDateInfo{
+			Date:    d.Date,
+			HexDate: d.HexDate,
+			Epoch:   d.Epoch,
+		}
+	}
+
+	// Track progress
+	totalDates := len(dates)
+	for i, dateInfo := range dates {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Update progress
+		progress := taskqueue.TaskProgress{
+			CurrentPhase:   "downloading",
+			CurrentDate:    i + 1,
+			TotalDates:     totalDates,
+			TilesCompleted: 0,
+			TilesTotal:     0,
+			Percent:        (i * 100) / totalDates,
+		}
+		progressChan <- progress
+
+		// Download imagery based on source
+		var err error
+		switch task.Source {
+		case "google", "ge":
+			err = a.DownloadGoogleEarthHistoricalImagery(bbox, task.Zoom, dateInfo.HexDate, dateInfo.Epoch, dateInfo.Date, task.Format)
+		case "esri":
+			err = a.DownloadEsriImagery(bbox, task.Zoom, dateInfo.Date, task.Format)
+		default:
+			err = fmt.Errorf("unknown source: %s", task.Source)
+		}
+
+		if err != nil {
+			log.Printf("[TaskQueue] Failed to download date %s: %v", dateInfo.Date, err)
+			// Continue with other dates, don't fail the entire task
+		}
+	}
+
+	// If video export is requested, do it after all imagery is downloaded
+	if task.VideoExport && task.VideoOpts != nil {
+		progress := taskqueue.TaskProgress{
+			CurrentPhase:   "encoding",
+			CurrentDate:    totalDates,
+			TotalDates:     totalDates,
+			TilesCompleted: 0,
+			TilesTotal:     0,
+			Percent:        95,
+		}
+		progressChan <- progress
+
+		// Convert video options
+		videoOpts := VideoExportOptions{
+			Width:              task.VideoOpts.Width,
+			Height:             task.VideoOpts.Height,
+			Preset:             task.VideoOpts.Preset,
+			CropX:              task.VideoOpts.CropX,
+			CropY:              task.VideoOpts.CropY,
+			SpotlightEnabled:   task.VideoOpts.SpotlightEnabled,
+			SpotlightCenterLat: task.VideoOpts.SpotlightCenterLat,
+			SpotlightCenterLon: task.VideoOpts.SpotlightCenterLon,
+			SpotlightRadiusKm:  task.VideoOpts.SpotlightRadiusKm,
+			OverlayOpacity:     task.VideoOpts.OverlayOpacity,
+			ShowDateOverlay:    task.VideoOpts.ShowDateOverlay,
+			DateFontSize:       task.VideoOpts.DateFontSize,
+			DatePosition:       task.VideoOpts.DatePosition,
+			FrameDelay:         task.VideoOpts.FrameDelay,
+			OutputFormat:       task.VideoOpts.OutputFormat,
+			Quality:            task.VideoOpts.Quality,
+		}
+
+		if err := a.ExportTimelapseVideo(bbox, task.Zoom, dates, task.Source, videoOpts); err != nil {
+			return fmt.Errorf("video export failed: %w", err)
+		}
+	}
+
+	// Final progress update
+	progress := taskqueue.TaskProgress{
+		CurrentPhase:   "completed",
+		CurrentDate:    totalDates,
+		TotalDates:     totalDates,
+		TilesCompleted: 0,
+		TilesTotal:     0,
+		Percent:        100,
+	}
+	progressChan <- progress
+
+	log.Printf("[TaskQueue] Task completed: %s", task.ID)
+	return nil
 }
