@@ -20,6 +20,7 @@ export interface ImageryState {
   viewMode: ViewMode;
   esriDates: AvailableDate[]; // Shared across all maps
   esriDatesLoading: boolean; // True when fetching viewport-based dates
+  geDatesLoading: boolean; // True when fetching Google Earth dates
   maps: {
     single: MapState;
     left: MapState;
@@ -28,6 +29,12 @@ export interface ImageryState {
   layers: {
     imagery: { visible: boolean; opacity: number };
     bbox: { visible: boolean; opacity: number };
+  };
+  // Shared map position (synced across all views)
+  mapPosition: {
+    center: [number, number]; // [lon, lat]
+    zoom: number;
+    isLoaded: boolean; // True once loaded from settings
   };
 }
 
@@ -48,7 +55,9 @@ export type ImageryAction =
       layer: "imagery" | "bbox";
       visible: boolean;
     }
-  | { type: "SET_LAYER_OPACITY"; layer: "imagery" | "bbox"; opacity: number };
+  | { type: "SET_LAYER_OPACITY"; layer: "imagery" | "bbox"; opacity: number }
+  | { type: "SET_MAP_POSITION"; center: [number, number]; zoom: number }
+  | { type: "SET_GE_DATES_LOADING"; loading: boolean };
 
 // ===================
 // Initial State
@@ -65,6 +74,7 @@ const initialState: ImageryState = {
   viewMode: "single",
   esriDates: [],
   esriDatesLoading: false,
+  geDatesLoading: false,
   maps: {
     single: { ...initialMapState },
     left: { ...initialMapState },
@@ -73,6 +83,11 @@ const initialState: ImageryState = {
   layers: {
     imagery: { visible: true, opacity: 1 },
     bbox: { visible: false, opacity: 0.2 },
+  },
+  mapPosition: {
+    center: [31.2219, 30.0621], // Zamalek, Cairo, Egypt [lon, lat]
+    zoom: 15,
+    isLoaded: false,
   },
 };
 
@@ -105,6 +120,12 @@ function imageryReducer(
       return {
         ...state,
         esriDatesLoading: action.loading,
+      };
+
+    case "SET_GE_DATES_LOADING":
+      return {
+        ...state,
+        geDatesLoading: action.loading,
       };
 
     case "SET_MAP_SOURCE":
@@ -184,6 +205,16 @@ function imageryReducer(
             ...state.layers[action.layer],
             opacity: action.opacity,
           },
+        },
+      };
+
+    case "SET_MAP_POSITION":
+      return {
+        ...state,
+        mapPosition: {
+          center: action.center,
+          zoom: action.zoom,
+          isLoaded: true,
         },
       };
 

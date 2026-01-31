@@ -58,6 +58,24 @@ func (a *App) GetSettingsPath() string {
 	return config.GetSettingsPath()
 }
 
+// SaveMapPosition saves the current map position for session persistence
+// Called on app close or periodically to remember the last viewed location
+func (a *App) SaveMapPosition(lat, lon, zoom float64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.settings.LastCenterLat = lat
+	a.settings.LastCenterLon = lon
+	a.settings.LastZoom = zoom
+
+	if err := config.SaveSettings(a.settings); err != nil {
+		return err
+	}
+
+	log.Printf("Saved map position: lat=%.6f, lon=%.6f, zoom=%.1f", lat, lon, zoom)
+	return nil
+}
+
 // ===================
 // Custom Sources
 // ===================

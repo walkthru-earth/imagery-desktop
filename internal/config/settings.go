@@ -60,6 +60,11 @@ type UserSettings struct {
 	// Task queue settings
 	MaxConcurrentTasks int  `json:"maxConcurrentTasks"` // 1-5, default 1
 	TaskPanelOpen      bool `json:"taskPanelOpen"`      // Whether task panel is expanded
+
+	// Last session map state (auto-saved on app close)
+	LastCenterLat float64 `json:"lastCenterLat"`
+	LastCenterLon float64 `json:"lastCenterLon"`
+	LastZoom      float64 `json:"lastZoom"`
 }
 
 // DefaultSettings returns default user settings
@@ -71,10 +76,10 @@ func DefaultSettings() *UserSettings {
 		DownloadPath:         downloadPath,
 		CacheMaxSizeMB:       250,
 		CacheTTLDays:         30,
-		DefaultZoom:          10,
+		DefaultZoom:          15,
 		DefaultSource:        "esri",
-		DefaultCenterLat:     30.0444, // Cairo, Egypt
-		DefaultCenterLon:     31.2357,
+		DefaultCenterLat:     30.0621, // Zamalek, Cairo, Egypt
+		DefaultCenterLon:     31.2219,
 		DownloadZoomStrategy: "fixed",
 		DownloadFixedZoom:    19,
 		CustomSources:        []CustomSource{},
@@ -102,6 +107,9 @@ func DefaultSettings() *UserSettings {
 		AutoOpenDownloadDir: true,
 		MaxConcurrentTasks:  1,
 		TaskPanelOpen:       false,
+		LastCenterLat:       30.0621, // Zamalek, Cairo (same as DefaultCenterLat)
+		LastCenterLon:       31.2219, // Zamalek, Cairo (same as DefaultCenterLon)
+		LastZoom:            15,
 	}
 }
 
@@ -172,6 +180,14 @@ func LoadSettings() (*UserSettings, error) {
 	}
 	if settings.MaxConcurrentTasks > 5 {
 		settings.MaxConcurrentTasks = 5
+	}
+	// Default last position to Cairo if not set (0 values indicate unset)
+	if settings.LastCenterLat == 0 && settings.LastCenterLon == 0 {
+		settings.LastCenterLat = defaults.LastCenterLat
+		settings.LastCenterLon = defaults.LastCenterLon
+	}
+	if settings.LastZoom == 0 {
+		settings.LastZoom = defaults.LastZoom
 	}
 
 	return &settings, nil

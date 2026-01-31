@@ -9,6 +9,10 @@ const MAP_STYLES = {
   dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 };
 
+// Default center (Zamalek, Cairo, Egypt) - used when no initial position provided
+const DEFAULT_CENTER: [number, number] = [31.2219, 30.0621];
+const DEFAULT_ZOOM = 15;
+
 /**
  * Hook to initialize and manage a MapLibre GL map instance
  * Handles map creation, theme updates, and cleanup
@@ -16,9 +20,15 @@ const MAP_STYLES = {
 export function useMapInstance(
   containerRef: RefObject<HTMLDivElement | null>,
   theme: "light" | "dark",
-  onStyleLoad?: () => void
+  onStyleLoad?: () => void,
+  initialCenter?: [number, number],
+  initialZoom?: number
 ): maplibregl.Map | null {
   const [map, setMap] = useState<maplibregl.Map | null>(null);
+
+  // Use provided position or fallback to defaults
+  const center = initialCenter || DEFAULT_CENTER;
+  const zoom = initialZoom ?? DEFAULT_ZOOM;
 
   // Initialize map
   useEffect(() => {
@@ -35,8 +45,8 @@ export function useMapInstance(
     const mapInstance = new maplibregl.Map({
       container: containerRef.current,
       style: MAP_STYLES[theme],
-      center: [31.2357, 30.0444], // Cairo, Egypt
-      zoom: 10,
+      center,
+      zoom,
       // @ts-ignore - preserveDrawingBuffer is valid WebGL context option
       preserveDrawingBuffer: true, // Required for canvas recording/screenshots
       attributionControl: false, // We will add a custom one below

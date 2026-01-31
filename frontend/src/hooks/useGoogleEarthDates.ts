@@ -4,6 +4,11 @@ import { debounce } from "@/utils/debounce";
 import { api, createBoundingBox } from "@/services/api";
 import type { GEAvailableDate } from "@/types";
 
+interface UseGoogleEarthDatesResult {
+  dates: GEAvailableDate[];
+  isLoading: boolean;
+}
+
 /**
  * Hook to automatically fetch Google Earth dates based on map viewport
  * Debounces requests to avoid excessive API calls during map movement
@@ -11,8 +16,9 @@ import type { GEAvailableDate } from "@/types";
 export function useGoogleEarthDates(
   map: maplibregl.Map | null,
   enabled: boolean
-): GEAvailableDate[] {
+): UseGoogleEarthDatesResult {
   const [dates, setDates] = useState<GEAvailableDate[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Check if dates are equal to avoid unnecessary updates
   const areDatesEqual = (d1: GEAvailableDate[], d2: GEAvailableDate[]) => {
@@ -33,6 +39,7 @@ export function useGoogleEarthDates(
   const fetchDates = useCallback(
     async (mapInstance: maplibregl.Map) => {
       try {
+        setIsLoading(true);
         const bounds = mapInstance.getBounds();
         const zoom = Math.round(mapInstance.getZoom());
 
@@ -47,7 +54,7 @@ export function useGoogleEarthDates(
         );
 
         const fetchedDates = await api.getGoogleEarthDatesForArea(bbox, zoom);
-        
+
         setDates((prevDates) => {
             const newDates = fetchedDates || [];
             if (areDatesEqual(prevDates, newDates)) {
@@ -60,6 +67,8 @@ export function useGoogleEarthDates(
       } catch (error) {
         console.error("[useGoogleEarthDates] Error fetching dates:", error);
         setDates([]);
+      } finally {
+        setIsLoading(false);
       }
     },
     [] // No dependencies, function is stable
@@ -107,5 +116,5 @@ export function useGoogleEarthDates(
     };
   }, [map, enabled, fetchDates]);
 
-  return dates;
+  return { dates, isLoading };
 }

@@ -106,6 +106,14 @@ function App() {
         if (s.taskPanelOpen !== undefined) {
           setIsTaskPanelOpen(s.taskPanelOpen);
         }
+        // Load last map position from settings
+        if (s.lastCenterLat && s.lastCenterLon) {
+          dispatch({
+            type: "SET_MAP_POSITION",
+            center: [s.lastCenterLon, s.lastCenterLat],
+            zoom: s.lastZoom || 10,
+          });
+        }
       }
     } catch (err) {
       console.error("Failed to load settings:", err);
@@ -130,8 +138,6 @@ function App() {
     });
   }, []);
 
-
-
   // ===================
   // Map Instances
   // ===================
@@ -151,23 +157,105 @@ function App() {
     dispatch({ type: "SET_STYLE_LOADED", map: "right", loaded: true });
   }, [dispatch]);
 
+  // Get initial position from context (loaded from settings)
+  const initialCenter = state.mapPosition.isLoaded
+    ? state.mapPosition.center
+    : undefined;
+  const initialZoom = state.mapPosition.isLoaded
+    ? state.mapPosition.zoom
+    : undefined;
+
   const singleMap = useMapInstance(
     singleMapRef,
     effectiveTheme,
-    handleSingleStyleLoad
+    handleSingleStyleLoad,
+    initialCenter,
+    initialZoom
   );
 
   const leftMap = useMapInstance(
     leftMapRef,
     effectiveTheme,
-    handleLeftStyleLoad
+    handleLeftStyleLoad,
+    initialCenter,
+    initialZoom
   );
 
   const rightMap = useMapInstance(
     rightMapRef,
     effectiveTheme,
-    handleRightStyleLoad
+    handleRightStyleLoad,
+    initialCenter,
+    initialZoom
   );
+
+  // ===================
+  // Map Position Sync
+  // ===================
+  // Track position changes on moveend
+  useEffect(() => {
+    const activeMap = state.viewMode === "single" ? singleMap : leftMap;
+    if (!activeMap) return;
+
+    const handleMoveEnd = () => {
+      const center = activeMap.getCenter();
+      const zoom = activeMap.getZoom();
+      dispatch({
+        type: "SET_MAP_POSITION",
+        center: [center.lng, center.lat],
+        zoom,
+      });
+    };
+
+    activeMap.on("moveend", handleMoveEnd);
+    return () => {
+      activeMap.off("moveend", handleMoveEnd);
+    };
+  }, [singleMap, leftMap, state.viewMode, dispatch]);
+
+  // Save position on app close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const map = singleMap || leftMap;
+      if (map && (window as any).go?.main?.App?.SaveMapPosition) {
+        const center = map.getCenter();
+        // Fire and forget - can't await in beforeunload
+        (window as any).go.main.App.SaveMapPosition(center.lat, center.lng, map.getZoom());
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [singleMap, leftMap]);
+
+  // Sync position when switching from split to single view only
+  // Note: We don't sync when going TO split view because MapCompare handles the map sync
+  const mapPositionRef = React.useRef(state.mapPosition);
+  mapPositionRef.current = state.mapPosition;
+
+  const prevViewModeRef = React.useRef(state.viewMode);
+
+  useEffect(() => {
+    const prevMode = prevViewModeRef.current;
+    prevViewModeRef.current = state.viewMode;
+
+    // Only sync when switching FROM split TO single (not the other way)
+    if (prevMode === "split" && state.viewMode === "single") {
+      const { center, zoom, isLoaded } = mapPositionRef.current;
+      if (!isLoaded) return;
+
+      // Small delay to ensure single map is ready
+      const timer = setTimeout(() => {
+        if (singleMap && singleMap.loaded()) {
+          singleMap.jumpTo({ center, zoom });
+        }
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }
+  }, [state.viewMode, singleMap]);
 
   // ===================
   // Esri Dates (Per Map - with local changes detection)
@@ -235,20 +323,31 @@ function App() {
   // ===================
   // Google Earth Dates (Per Map)
   // ===================
-  const singleGeDates = useGoogleEarthDates(
+  const { dates: singleGeDates, isLoading: singleGeLoading } = useGoogleEarthDates(
     singleMap,
     state.viewMode === "single" && state.maps.single.source === "google"
   );
 
-  const leftGeDates = useGoogleEarthDates(
+  const { dates: leftGeDates, isLoading: leftGeLoading } = useGoogleEarthDates(
     leftMap,
     state.viewMode === "split" && state.maps.left.source === "google"
   );
 
-  const rightGeDates = useGoogleEarthDates(
+  const { dates: rightGeDates, isLoading: rightGeLoading } = useGoogleEarthDates(
     rightMap,
     state.viewMode === "split" && state.maps.right.source === "google"
   );
+
+  // Track if any GE dates are loading
+  const geDatesLoading =
+    (state.viewMode === "single" && state.maps.single.source === "google" && singleGeLoading) ||
+    (state.viewMode === "split" && state.maps.left.source === "google" && leftGeLoading) ||
+    (state.viewMode === "split" && state.maps.right.source === "google" && rightGeLoading);
+
+  // Dispatch GE loading state to context
+  useEffect(() => {
+    dispatch({ type: "SET_GE_DATES_LOADING", loading: geDatesLoading });
+  }, [geDatesLoading, dispatch]);
 
   // Update context when dates change
   useEffect(() => {
@@ -548,6 +647,19 @@ function App() {
           isOpen={isTaskPanelOpen}
           onToggle={() => setIsTaskPanelOpen(!isTaskPanelOpen)}
           refreshTrigger={taskPanelRefreshTrigger}
+          onTaskSelect={(task) => {
+            // Fly to task's bbox location
+            const map = state.viewMode === "single" ? singleMap : leftMap;
+            if (map && task.bbox) {
+              map.fitBounds(
+                [
+                  [task.bbox.west, task.bbox.south],
+                  [task.bbox.east, task.bbox.north],
+                ],
+                { padding: 50, duration: 1000 }
+              );
+            }
+          }}
           onReExport={(task) => {
             setReExportTask(task);
             setIsReExportDialogOpen(true);

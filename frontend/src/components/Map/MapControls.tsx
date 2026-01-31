@@ -19,6 +19,8 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
   const mapState = state.maps.single;
   const dates = getAvailableDates(state, "single");
   const isEsriLoading = mapState.source === "esri" && state.esriDatesLoading;
+  const isGeLoading = mapState.source === "google" && state.geDatesLoading;
+  const isLoading = isEsriLoading || isGeLoading;
 
   // Range selection mode
   const [isRangeMode, setIsRangeMode] = useState(false);
@@ -81,8 +83,8 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
           </Button>
         </div>
 
-        {/* Loading State for Esri */}
-        {isEsriLoading && dates.length === 0 && (
+        {/* Loading State */}
+        {isLoading && dates.length === 0 && (
           <div className="flex items-center justify-center py-2 text-muted-foreground">
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             <span className="text-sm">Loading available dates...</span>
@@ -268,8 +270,10 @@ export function MapControls({
               className="w-full"
             />
 
-            {/* Loading State for Esri */}
-            {state.maps.left.source === "esri" && state.esriDatesLoading && getAvailableDates(state, "left").length === 0 && (
+            {/* Loading State */}
+            {((state.maps.left.source === "esri" && state.esriDatesLoading) ||
+              (state.maps.left.source === "google" && state.geDatesLoading)) &&
+              getAvailableDates(state, "left").length === 0 && (
               <div className="flex flex-col items-center py-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin mb-1" />
                 <span className="text-xs">Loading...</span>
@@ -372,8 +376,10 @@ export function MapControls({
               className="w-full"
             />
 
-            {/* Loading State for Esri */}
-            {state.maps.right.source === "esri" && state.esriDatesLoading && getAvailableDates(state, "right").length === 0 && (
+            {/* Loading State */}
+            {((state.maps.right.source === "esri" && state.esriDatesLoading) ||
+              (state.maps.right.source === "google" && state.geDatesLoading)) &&
+              getAvailableDates(state, "right").length === 0 && (
               <div className="flex flex-col items-center py-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin mb-1" />
                 <span className="text-xs">Loading...</span>
