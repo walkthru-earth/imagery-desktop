@@ -40,8 +40,17 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
   return (
     <Card className="bg-background/95 backdrop-blur-lg shadow-lg">
       <CardContent className="p-2 space-y-1">
-        {/* Source Selector, Range Toggle, and Add Task */}
+        {/* Source Selector, Add Task, and Range Toggle */}
         <div className="flex gap-2 items-center">
+          <SourceSelector
+            value={mapState.source}
+            onChange={(source) => {
+              console.log("[MapControls] Single view - switching to:", source);
+              dispatch({ type: "SET_MAP_SOURCE", map: "single", source: source as ImagerySource });
+            }}
+            size="md"
+            className="flex-1"
+          />
           {onAddTask && dates.length > 0 && (
             <Button
               size="default"
@@ -57,15 +66,6 @@ function SingleViewTimeline({ onAddTask }: { onAddTask?: (dateRange?: any[]) => 
               )}
             </Button>
           )}
-          <SourceSelector
-            value={mapState.source}
-            onChange={(source) => {
-              console.log("[MapControls] Single view - switching to:", source);
-              dispatch({ type: "SET_MAP_SOURCE", map: "single", source: source as ImagerySource });
-            }}
-            size="md"
-            className="flex-1"
-          />
           <Button
             size="default"
             variant={isRangeMode ? "default" : "outline"}
