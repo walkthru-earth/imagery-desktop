@@ -200,7 +200,29 @@ OGC ZXY-compliant directory structure compatible with GeoServer, QGIS, and GDAL:
 | Eviction | LRU when exceeding size limit |
 | Persistence | Survives app restarts |
 
-## Quick Start
+## Installation
+
+Download the latest release from [walkthru.earth/software/imagery-desktop](https://walkthru.earth/software/imagery-desktop).
+
+### macOS
+
+The app is not signed with an Apple Developer certificate. After downloading:
+
+```bash
+# Remove quarantine attribute
+xattr -cr /path/to/imagery-desktop.app
+
+# Or if you moved it to Applications:
+xattr -cr /Applications/imagery-desktop.app
+```
+
+If you see "damaged and can't be opened", this command will fix it.
+
+### Windows
+
+Windows SmartScreen may show "Windows protected your PC". Click **More info** → **Run anyway**.
+
+## Development
 
 ### Prerequisites
 
@@ -212,7 +234,7 @@ OGC ZXY-compliant directory structure compatible with GeoServer, QGIS, and GDAL:
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 ```
 
-### Development
+### Run
 
 ```bash
 wails dev

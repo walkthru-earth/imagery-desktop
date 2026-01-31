@@ -63,13 +63,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Download FFmpeg (macOS)
+      - name: Download FFmpeg (macOS ARM64)
         if: matrix.os == 'macos-latest'
         run: |
           mkdir -p FFmpeg
-          curl -L "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" -o FFmpeg/ffmpeg.zip
+          # Use Martin Riedl's signed ARM64 builds (evermeet.cx only has Intel)
+          curl -L "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip" -o FFmpeg/ffmpeg.zip
           cd FFmpeg && unzip -o ffmpeg.zip && rm ffmpeg.zip
           chmod +x ffmpeg
+          # Martin Riedl's builds are already signed, verify it
+          codesign -v ffmpeg || codesign -s - ffmpeg
           ./ffmpeg -version | head -1
 
       - name: Download FFmpeg (Windows)
@@ -145,6 +148,15 @@ jobs:
           mkdir -p imagery-desktop.app/Contents/Resources
           cp ../../FFmpeg/ffmpeg imagery-desktop.app/Contents/Resources/
           chmod +x imagery-desktop.app/Contents/Resources/ffmpeg
+
+          # FFmpeg from Martin Riedl is already signed, just verify
+          codesign -v imagery-desktop.app/Contents/Resources/ffmpeg || true
+
+          # Ad-hoc sign the entire app bundle (reduces Gatekeeper issues)
+          codesign -s - --force --deep imagery-desktop.app
+
+          # Remove quarantine attribute if present
+          xattr -cr imagery-desktop.app
 
           # Zip the .app bundle with versioned name
           zip -r "imagery-desktop-${VERSION}-macos-arm64.zip" imagery-desktop.app
