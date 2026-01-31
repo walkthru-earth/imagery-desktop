@@ -1,303 +1,169 @@
 import * as React from "react";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { CropPreview } from "@/types";
 
 interface MapCropOverlayProps {
-  /** Whether the overlay is visible */
   visible: boolean;
-  /** Current crop settings (0-1 relative coordinates) */
   crop: CropPreview;
-  /** Callback when crop changes */
-  onChange: (crop: CropPreview) => void;
-  /** Container element to render within */
+  onChange?: (crop: CropPreview) => void;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** Lock aspect ratio based on video preset */
+  aspectRatio?: number;
 }
-
-type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 export function MapCropOverlay({
   visible,
   crop,
   onChange,
   containerRef,
+  aspectRatio,
 }: MapCropOverlayProps) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isResizing, setIsResizing] = useState<ResizeHandle | null>(null);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [cropStart, setCropStart] = useState<CropPreview>(crop);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
-  // Convert relative crop to pixel coordinates
-  const getPixelCrop = useCallback(() => {
-    if (!containerRef.current) return null;
-    const rect = containerRef.current.getBoundingClientRect();
-    return {
-      x: crop.x * rect.width,
-      y: crop.y * rect.height,
-      width: crop.width * rect.width,
-      height: crop.height * rect.height,
-      containerWidth: rect.width,
-      containerHeight: rect.height,
-    };
-  }, [crop, containerRef]);
-
-  // Convert pixel coordinates to relative crop
-  const pixelToRelative = useCallback(
-    (x: number, y: number, width: number, height: number): CropPreview => {
-      if (!containerRef.current) return crop;
-      const rect = containerRef.current.getBoundingClientRect();
-      return {
-        x: Math.max(0, Math.min(1 - width / rect.width, x / rect.width)),
-        y: Math.max(0, Math.min(1 - height / rect.height, y / rect.height)),
-        width: Math.max(0.1, Math.min(1, width / rect.width)),
-        height: Math.max(0.1, Math.min(1, height / rect.height)),
-      };
-    },
-    [containerRef, crop]
-  );
-
-  // Handle mouse down on the crop area (for dragging)
-  const handleCropMouseDown = (e: React.MouseEvent) => {
-    if (isResizing) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-    setDragStart({ x: e.clientX, y: e.clientY });
-    setCropStart(crop);
-  };
-
-  // Handle mouse down on resize handles
-  const handleResizeMouseDown = (e: React.MouseEvent, handle: ResizeHandle) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsResizing(handle);
-    setDragStart({ x: e.clientX, y: e.clientY });
-    setCropStart(crop);
-  };
-
-  // Handle mouse move
+  // Update container size on resize
   useEffect(() => {
-    if (!isDragging && !isResizing) return;
+    if (!containerRef.current) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-
-      const dx = (e.clientX - dragStart.x) / rect.width;
-      const dy = (e.clientY - dragStart.y) / rect.height;
-
-      if (isDragging) {
-        // Move the crop area
-        const newX = Math.max(
-          0,
-          Math.min(1 - cropStart.width, cropStart.x + dx)
-        );
-        const newY = Math.max(
-          0,
-          Math.min(1 - cropStart.height, cropStart.y + dy)
-        );
-        onChange({ ...crop, x: newX, y: newY });
-      } else if (isResizing) {
-        // Resize the crop area
-        let newCrop = { ...cropStart };
-
-        switch (isResizing) {
-          case "nw":
-            newCrop.x = Math.max(0, Math.min(cropStart.x + cropStart.width - 0.1, cropStart.x + dx));
-            newCrop.y = Math.max(0, Math.min(cropStart.y + cropStart.height - 0.1, cropStart.y + dy));
-            newCrop.width = cropStart.width - (newCrop.x - cropStart.x);
-            newCrop.height = cropStart.height - (newCrop.y - cropStart.y);
-            break;
-          case "n":
-            newCrop.y = Math.max(0, Math.min(cropStart.y + cropStart.height - 0.1, cropStart.y + dy));
-            newCrop.height = cropStart.height - (newCrop.y - cropStart.y);
-            break;
-          case "ne":
-            newCrop.y = Math.max(0, Math.min(cropStart.y + cropStart.height - 0.1, cropStart.y + dy));
-            newCrop.width = Math.max(0.1, Math.min(1 - cropStart.x, cropStart.width + dx));
-            newCrop.height = cropStart.height - (newCrop.y - cropStart.y);
-            break;
-          case "e":
-            newCrop.width = Math.max(0.1, Math.min(1 - cropStart.x, cropStart.width + dx));
-            break;
-          case "se":
-            newCrop.width = Math.max(0.1, Math.min(1 - cropStart.x, cropStart.width + dx));
-            newCrop.height = Math.max(0.1, Math.min(1 - cropStart.y, cropStart.height + dy));
-            break;
-          case "s":
-            newCrop.height = Math.max(0.1, Math.min(1 - cropStart.y, cropStart.height + dy));
-            break;
-          case "sw":
-            newCrop.x = Math.max(0, Math.min(cropStart.x + cropStart.width - 0.1, cropStart.x + dx));
-            newCrop.width = cropStart.width - (newCrop.x - cropStart.x);
-            newCrop.height = Math.max(0.1, Math.min(1 - cropStart.y, cropStart.height + dy));
-            break;
-          case "w":
-            newCrop.x = Math.max(0, Math.min(cropStart.x + cropStart.width - 0.1, cropStart.x + dx));
-            newCrop.width = cropStart.width - (newCrop.x - cropStart.x);
-            break;
-        }
-
-        onChange(newCrop);
+    const updateSize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setContainerSize({ width: rect.width, height: rect.height });
       }
     };
 
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      setIsResizing(null);
-    };
+    updateSize();
 
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
+    const resizeObserver = new ResizeObserver(updateSize);
+    resizeObserver.observe(containerRef.current);
 
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isDragging, isResizing, dragStart, cropStart, crop, onChange, containerRef]);
+    return () => resizeObserver.disconnect();
+  }, [containerRef]);
 
-  if (!visible) return null;
+  if (!visible || containerSize.width === 0) return null;
 
-  const pixelCrop = getPixelCrop();
-  if (!pixelCrop) return null;
-
-  const handleStyle = {
-    position: "absolute" as const,
-    width: 12,
-    height: 12,
-    background: "white",
-    border: "2px solid #3b82f6",
-    borderRadius: 2,
-    cursor: "pointer",
-  };
+  // Calculate pixel positions
+  const cropLeft = crop.x * containerSize.width;
+  const cropTop = crop.y * containerSize.height;
+  const cropWidth = crop.width * containerSize.width;
+  const cropHeight = crop.height * containerSize.height;
 
   return (
-    <div
-      ref={overlayRef}
-      className="absolute inset-0 pointer-events-none"
-      style={{ zIndex: 100 }}
-    >
-      {/* Dark overlay for areas outside crop */}
-      <svg
-        className="absolute inset-0 w-full h-full"
-        style={{ pointerEvents: "none" }}
-      >
-        <defs>
-          <mask id="crop-mask">
-            <rect width="100%" height="100%" fill="white" />
-            <rect
-              x={pixelCrop.x}
-              y={pixelCrop.y}
-              width={pixelCrop.width}
-              height={pixelCrop.height}
-              fill="black"
-            />
-          </mask>
-        </defs>
-        <rect
-          width="100%"
-          height="100%"
-          fill="rgba(0,0,0,0.5)"
-          mask="url(#crop-mask)"
-        />
-      </svg>
-
-      {/* Crop area border */}
+    <>
+      {/* Dark overlay - 4 rectangles around the crop area */}
+      {/* Top */}
       <div
-        className="absolute pointer-events-auto cursor-move"
+        className="absolute bg-black/60 pointer-events-none"
         style={{
-          left: pixelCrop.x,
-          top: pixelCrop.y,
-          width: pixelCrop.width,
-          height: pixelCrop.height,
-          border: "2px solid #3b82f6",
-          boxShadow: "0 0 0 9999px rgba(0,0,0,0)",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: cropTop,
+          zIndex: 50,
         }}
-        onMouseDown={handleCropMouseDown}
+      />
+      {/* Bottom */}
+      <div
+        className="absolute bg-black/60 pointer-events-none"
+        style={{
+          top: cropTop + cropHeight,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 50,
+        }}
+      />
+      {/* Left */}
+      <div
+        className="absolute bg-black/60 pointer-events-none"
+        style={{
+          top: cropTop,
+          left: 0,
+          width: cropLeft,
+          height: cropHeight,
+          zIndex: 50,
+        }}
+      />
+      {/* Right */}
+      <div
+        className="absolute bg-black/60 pointer-events-none"
+        style={{
+          top: cropTop,
+          left: cropLeft + cropWidth,
+          right: 0,
+          height: cropHeight,
+          zIndex: 50,
+        }}
+      />
+
+      {/* Crop frame border */}
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          top: cropTop,
+          left: cropLeft,
+          width: cropWidth,
+          height: cropHeight,
+          border: "2px solid rgba(59, 130, 246, 0.8)",
+          boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.2)",
+          zIndex: 51,
+        }}
       >
-        {/* Grid lines */}
-        <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none">
-          {[...Array(9)].map((_, i) => (
-            <div key={i} className="border border-white/30" />
-          ))}
+        {/* Rule of thirds grid */}
+        <div className="absolute inset-0 pointer-events-none">
+          {/* Vertical lines */}
+          <div className="absolute top-0 bottom-0 left-1/3 w-px bg-white/20" />
+          <div className="absolute top-0 bottom-0 left-2/3 w-px bg-white/20" />
+          {/* Horizontal lines */}
+          <div className="absolute left-0 right-0 top-1/3 h-px bg-white/20" />
+          <div className="absolute left-0 right-0 top-2/3 h-px bg-white/20" />
         </div>
 
-        {/* Resize handles */}
-        {/* Corners */}
-        <div
-          style={{ ...handleStyle, top: -6, left: -6, cursor: "nwse-resize" }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "nw")}
-        />
-        <div
-          style={{ ...handleStyle, top: -6, right: -6, cursor: "nesw-resize" }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "ne")}
-        />
-        <div
-          style={{ ...handleStyle, bottom: -6, right: -6, cursor: "nwse-resize" }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "se")}
-        />
-        <div
-          style={{ ...handleStyle, bottom: -6, left: -6, cursor: "nesw-resize" }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "sw")}
-        />
-
-        {/* Edges */}
-        <div
-          style={{
-            ...handleStyle,
-            top: -6,
-            left: "50%",
-            transform: "translateX(-50%)",
-            cursor: "ns-resize",
-          }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "n")}
-        />
-        <div
-          style={{
-            ...handleStyle,
-            right: -6,
-            top: "50%",
-            transform: "translateY(-50%)",
-            cursor: "ew-resize",
-          }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "e")}
-        />
-        <div
-          style={{
-            ...handleStyle,
-            bottom: -6,
-            left: "50%",
-            transform: "translateX(-50%)",
-            cursor: "ns-resize",
-          }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "s")}
-        />
-        <div
-          style={{
-            ...handleStyle,
-            left: -6,
-            top: "50%",
-            transform: "translateY(-50%)",
-            cursor: "ew-resize",
-          }}
-          className="pointer-events-auto"
-          onMouseDown={(e) => handleResizeMouseDown(e, "w")}
-        />
+        {/* Corner markers */}
+        {[
+          { top: -2, left: -2 },
+          { top: -2, right: -2 },
+          { bottom: -2, left: -2 },
+          { bottom: -2, right: -2 },
+        ].map((pos, i) => (
+          <div
+            key={i}
+            className="absolute w-4 h-4 border-2 border-blue-400"
+            style={{
+              ...pos,
+              borderTop: pos.top !== undefined ? "2px solid rgb(96, 165, 250)" : "none",
+              borderBottom: pos.bottom !== undefined ? "2px solid rgb(96, 165, 250)" : "none",
+              borderLeft: pos.left !== undefined ? "2px solid rgb(96, 165, 250)" : "none",
+              borderRight: pos.right !== undefined ? "2px solid rgb(96, 165, 250)" : "none",
+            }}
+          />
+        ))}
 
         {/* Dimensions label */}
-        <div
-          className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded pointer-events-none"
-        >
-          {Math.round(crop.width * 100)}% × {Math.round(crop.height * 100)}%
+        <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
+          {Math.round(cropWidth)}×{Math.round(cropHeight)}px ({Math.round(crop.width * 100)}%)
         </div>
       </div>
-    </div>
+
+      {/* Center crosshair */}
+      <div
+        className="absolute w-6 h-6 pointer-events-none"
+        style={{
+          top: cropTop + cropHeight / 2 - 12,
+          left: cropLeft + cropWidth / 2 - 12,
+          zIndex: 52,
+        }}
+      >
+        <div className="absolute top-1/2 left-0 right-0 h-px bg-white/50" />
+        <div className="absolute top-0 bottom-0 left-1/2 w-px bg-white/50" />
+      </div>
+
+      {/* Instructions */}
+      <div
+        className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white text-sm px-4 py-2 rounded-lg pointer-events-none"
+        style={{ zIndex: 53 }}
+      >
+        Pan and zoom the map to frame your export area
+      </div>
+    </>
   );
 }

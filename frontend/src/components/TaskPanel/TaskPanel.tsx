@@ -120,11 +120,15 @@ export function TaskPanel({ isOpen, onToggle, onTaskSelect, onAddTask }: TaskPan
   };
 
   const handleDeleteTask = async (id: string) => {
+    console.log("[TaskPanel] Deleting task:", id);
     try {
       await api.deleteTask(id);
+      console.log("[TaskPanel] Task deleted successfully");
       loadTasks();
     } catch (error) {
-      console.error("Failed to delete task:", error);
+      console.error("[TaskPanel] Failed to delete task:", error);
+      // Show error to user
+      alert("Failed to delete task: " + error);
     }
   };
 
