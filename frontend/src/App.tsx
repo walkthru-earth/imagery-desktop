@@ -354,10 +354,9 @@ function App() {
     const zoom = Math.round(currentMap.getZoom());
 
     if (mapState.source === "esri") {
-      // Use selected date range if available, otherwise all dates
-      const datesToUse = selectedDateRange || dates;
-      const dateRange = datesToUse.length > 1
-        ? datesToUse.map(d => ({ date: d.date }))
+      // Only pass dateRange if user explicitly selected a range
+      const dateRange = selectedDateRange && selectedDateRange.length > 1
+        ? selectedDateRange.map(d => ({ date: d.date }))
         : undefined;
 
       return {
@@ -370,10 +369,9 @@ function App() {
     } else {
       const geDate = currentDate as import("@/types").GEAvailableDate;
 
-      // Use selected date range if available, otherwise all dates
-      const geDates = (selectedDateRange || dates) as import("@/types").GEAvailableDate[];
-      const dateRange = geDates.length > 1
-        ? geDates.map(d => ({
+      // Only pass dateRange if user explicitly selected a range
+      const dateRange = selectedDateRange && selectedDateRange.length > 1
+        ? (selectedDateRange as import("@/types").GEAvailableDate[]).map(d => ({
             date: d.date,
             hexDate: d.hexDate,
             epoch: d.epoch,
@@ -412,10 +410,10 @@ function App() {
         {/* Single map view */}
         <div
           ref={singleMapRef}
-          className="absolute inset-0"
+          className="absolute inset-0 overflow-hidden"
           style={{ display: state.viewMode === "single" ? "block" : "none" }}
         >
-          {/* Crop overlay for video preview */}
+          {/* Crop overlay for video preview - only shown when video option enabled */}
           {cropPreview && state.viewMode === "single" && (
             <MapCropOverlay
               visible={true}
