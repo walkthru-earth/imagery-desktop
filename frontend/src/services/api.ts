@@ -69,8 +69,8 @@ export const api = {
     DownloadEsriImageryRange(bbox, zoom, dates, format),
 
   // Google Earth Current
-  getGoogleEarthTileURL: () =>
-    GetGoogleEarthTileURL(),
+  getGoogleEarthTileURL: (date: string) =>
+    GetGoogleEarthTileURL(date),
 
   downloadGoogleEarthImagery: (bbox: main.BoundingBox, zoom: number, format: string) =>
     DownloadGoogleEarthImagery(bbox, zoom, format),
@@ -79,8 +79,8 @@ export const api = {
   getGoogleEarthDatesForArea: (bbox: main.BoundingBox, zoom: number) =>
     GetGoogleEarthDatesForArea(bbox, zoom),
 
-  getGoogleEarthHistoricalTileURL: (quadtree: string, epoch: number) =>
-    GetGoogleEarthHistoricalTileURL(quadtree, epoch),
+  getGoogleEarthHistoricalTileURL: (date: string, hexDate: string, epoch: number) =>
+    GetGoogleEarthHistoricalTileURL(date, hexDate, epoch),
 
   downloadGoogleEarthHistoricalImagery: (
     bbox: main.BoundingBox,

@@ -1443,11 +1443,12 @@ func (a *App) StartTileServer() {
 }
 
 // handleGoogleEarthTile handles requests for Google Earth tiles
-// URL format: /ge/{z}/{x}/{y}
+// URL format: /ge/{date}/{z}/{x}/{y}
+// date format: YYYY-MM-DD (must be exact date from GetGoogleEarthDatesForArea)
 // This handler reprojects GE tiles (Plate Carrée) to Web Mercator for MapLibre
 func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 	// Parse path components
-	// Expected: /ge/z/x/y
+	// Expected: /ge/date/z/x/y
 	path := r.URL.Path
 	if len(path) < 4 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -1455,21 +1456,23 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := strings.Split(path[4:], "/") // Remove /ge/ prefix
-	if len(parts) < 3 {
-		http.Error(w, "Invalid tile coordinates", http.StatusBadRequest)
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path format, expected /ge/{date}/{z}/{x}/{y}", http.StatusBadRequest)
 		return
 	}
 
+	dateStr := parts[0]
 	var z, x, y int
-	if _, err := fmt.Sscanf(parts[0], "%d", &z); err != nil {
+
+	if _, err := fmt.Sscanf(parts[1], "%d", &z); err != nil {
 		http.Error(w, "Invalid zoom", http.StatusBadRequest)
 		return
 	}
-	if _, err := fmt.Sscanf(parts[1], "%d", &x); err != nil {
+	if _, err := fmt.Sscanf(parts[2], "%d", &x); err != nil {
 		http.Error(w, "Invalid x", http.StatusBadRequest)
 		return
 	}
-	if _, err := fmt.Sscanf(parts[2], "%d", &y); err != nil {
+	if _, err := fmt.Sscanf(parts[3], "%d", &y); err != nil {
 		http.Error(w, "Invalid y", http.StatusBadRequest)
 		return
 	}
@@ -1496,27 +1499,16 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Try cache first - for current imagery, query the actual date from Google Earth
+			// Use date from URL for caching
 			var data []byte
-			var tileDate string
 
-			// Get the actual imagery date for this tile from Google Earth TimeMachine
-			if a.geClient != nil {
-				dates, err := a.geClient.GetAvailableDates(tile)
-				if err == nil && len(dates) > 0 {
-					// Use the most recent available date for this tile
-					latestDate := dates[0].Date
-					tileDate = latestDate.Format("2006-01-02")
-				}
-			}
-
-			// If we have a date, check cache
-			if tileDate != "" && a.tileCache != nil {
-				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, tileDate)
+			// Check cache first
+			if a.tileCache != nil {
+				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, dateStr)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
 					if a.devMode {
-						log.Printf("[Cache HIT] Google Earth tile z=%d x=%d y=%d (date: %s)", tile.Level, tile.Column, tile.Row, tileDate)
+						log.Printf("[Cache HIT] Google Earth tile z=%d x=%d y=%d (date: %s)", tile.Level, tile.Column, tile.Row, dateStr)
 					}
 				}
 			}
@@ -1528,13 +1520,13 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				if a.devMode && tileDate != "" {
-					log.Printf("[Cache MISS] Google Earth tile z=%d x=%d y=%d (date: %s) - fetched from network", tile.Level, tile.Column, tile.Row, tileDate)
+				if a.devMode {
+					log.Printf("[Cache MISS] Google Earth tile z=%d x=%d y=%d (date: %s) - fetched from network", tile.Level, tile.Column, tile.Row, dateStr)
 				}
 
-				// Cache the result if we have a date
-				if tileDate != "" && a.tileCache != nil {
-					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, tileDate, data)
+				// Cache the result
+				if a.tileCache != nil {
+					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, dateStr, data)
 				}
 			}
 
@@ -2020,11 +2012,12 @@ func (a *App) serveTransparentTile(w http.ResponseWriter) {
 }
 
 // GetGoogleEarthTileURL returns the tile URL template for Google Earth (for map preview)
-func (a *App) GetGoogleEarthTileURL() (string, error) {
+func (a *App) GetGoogleEarthTileURL(date string) (string, error) {
 	if a.tileServerURL == "" {
 		return "", fmt.Errorf("tile server not started")
 	}
-	return fmt.Sprintf("%s/ge/{z}/{x}/{y}", a.tileServerURL), nil
+	// Date must be in YYYY-MM-DD format
+	return fmt.Sprintf("%s/ge/%s/{z}/{x}/{y}", a.tileServerURL, date), nil
 }
 
 // GEAvailableDate represents an available Google Earth historical imagery date
@@ -2191,12 +2184,13 @@ func (a *App) GetGoogleEarthDatesForArea(bbox BoundingBox, zoom int) ([]GEAvaila
 
 // GetGoogleEarthHistoricalTileURL returns the tile URL template for historical Google Earth imagery
 // Note: epoch is no longer used in URL - it's looked up per-tile for accuracy
-func (a *App) GetGoogleEarthHistoricalTileURL(hexDate string, epoch int) (string, error) {
+func (a *App) GetGoogleEarthHistoricalTileURL(date string, hexDate string, epoch int) (string, error) {
 	if a.tileServerURL == "" {
 		return "", fmt.Errorf("tile server not started")
 	}
 	// Note: epoch parameter kept for API compatibility but not used in URL
 	// Each tile looks up its own epoch from the quadtree
+	// Use regular date format (YYYY-MM-DD) for caching, still use historical endpoint
 	return fmt.Sprintf("%s/ge-historical/%s/{z}/{x}/{y}", a.tileServerURL, hexDate), nil
 }
 

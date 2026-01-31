@@ -57,11 +57,12 @@ export function useImageryLayer(
           tileURL = await api.getEsriTileURL(date.date);
           // console.log("[useImageryLayer] Esri tile URL:", tileURL);
         } else {
-          // Google Earth historical
+          // Google Earth (both current and historical use same endpoint with date)
           const geDate = date as GEAvailableDate;
           tileURL = await api.getGoogleEarthHistoricalTileURL(
-            geDate.hexDate,
-            geDate.epoch
+            geDate.date,      // Regular date format for caching
+            geDate.hexDate,   // Hex date for tile fetching
+            geDate.epoch      // Epoch for fallback
           );
           // console.log("[useImageryLayer] GE tile URL:", tileURL);
         }
