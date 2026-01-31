@@ -531,7 +531,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={settings.taskPanelOpen ?? true}
+                      checked={settings.taskPanelOpen ?? false}
                       onChange={(e) =>
                         setSettings({ ...settings, taskPanelOpen: e.target.checked })
                       }

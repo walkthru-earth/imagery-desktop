@@ -50,7 +50,7 @@ function App() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
 
   // Task panel state
-  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(true);
+  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
   const [taskPanelRefreshTrigger, setTaskPanelRefreshTrigger] = useState(0);
 
   // Re-export dialog state
