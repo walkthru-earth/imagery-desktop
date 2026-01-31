@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import { debounce } from "@/utils/debounce";
 import { api, createBoundingBox } from "@/services/api";
@@ -12,6 +12,11 @@ interface UseGoogleEarthDatesResult {
 /**
  * Hook to automatically fetch Google Earth dates based on map viewport
  * Debounces requests to avoid excessive API calls during map movement
+ *
+ * OPTIMIZATIONS:
+ * - Increased debounce to 800ms (was 500ms) to reduce API calls during panning
+ * - Abort controller to cancel stale requests
+ * - Request deduplication based on viewport
  */
 export function useGoogleEarthDates(
   map: maplibregl.Map | null,
@@ -19,6 +24,8 @@ export function useGoogleEarthDates(
 ): UseGoogleEarthDatesResult {
   const [dates, setDates] = useState<GEAvailableDate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const lastFetchKeyRef = useRef<string>("");
 
   // Check if dates are equal to avoid unnecessary updates
   const areDatesEqual = (d1: GEAvailableDate[], d2: GEAvailableDate[]) => {
@@ -38,10 +45,24 @@ export function useGoogleEarthDates(
   // Memoize the fetch function to avoid recreating on every render
   const fetchDates = useCallback(
     async (mapInstance: maplibregl.Map) => {
+      const bounds = mapInstance.getBounds();
+      const zoom = Math.round(mapInstance.getZoom());
+
+      // Create a key to avoid duplicate fetches for same viewport
+      const fetchKey = `${zoom}-${bounds.getSouth().toFixed(3)}-${bounds.getWest().toFixed(3)}-${bounds.getNorth().toFixed(3)}-${bounds.getEast().toFixed(3)}`;
+      if (fetchKey === lastFetchKeyRef.current) {
+        console.log("[useGoogleEarthDates] Same viewport, skipping fetch");
+        return;
+      }
+
+      // Cancel any in-flight request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
       try {
         setIsLoading(true);
-        const bounds = mapInstance.getBounds();
-        const zoom = Math.round(mapInstance.getZoom());
+        abortControllerRef.current = new AbortController();
 
         // Debounce logs to avoid flooding
         // console.log("[useGoogleEarthDates] Fetching dates for zoom:", zoom);
@@ -55,6 +76,14 @@ export function useGoogleEarthDates(
 
         const fetchedDates = await api.getGoogleEarthDatesForArea(bbox, zoom);
 
+        // Check if request was aborted
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log("[useGoogleEarthDates] Request aborted");
+          return;
+        }
+
+        lastFetchKeyRef.current = fetchKey;
+
         setDates((prevDates) => {
             const newDates = fetchedDates || [];
             if (areDatesEqual(prevDates, newDates)) {
@@ -65,6 +94,10 @@ export function useGoogleEarthDates(
             return newDates;
         });
       } catch (error) {
+        // Ignore abort errors
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
         console.error("[useGoogleEarthDates] Error fetching dates:", error);
         setDates([]);
       } finally {
@@ -79,24 +112,32 @@ export function useGoogleEarthDates(
       console.log("[useGoogleEarthDates] Hook disabled or no map");
       // Clear dates when disabled
       setDates([]);
+      lastFetchKeyRef.current = "";
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
       return;
     }
 
     // console.log("[useGoogleEarthDates] Hook enabled, setting up listeners");
 
-    // Create debounced version (500ms delay)
-    // Reduce debounce to make UI snappier but keep it to prevent rapid API calls
+    // Create debounced version (800ms delay - better performance)
+    // Increased from 500ms to reduce API calls during continuous panning
     const debouncedFetch = debounce(() => {
       fetchDates(map);
-    }, 500);
+    }, 800);
 
     // Initial fetch
-    if (map.loaded()) {
+    const doInitialFetch = () => {
+      // Reset fetch key to force a new fetch
+      lastFetchKeyRef.current = "";
       fetchDates(map);
+    };
+
+    if (map.loaded()) {
+      doInitialFetch();
     } else {
-      map.once("load", () => {
-         fetchDates(map);
-      });
+      map.once("load", doInitialFetch);
     }
 
     // Fetch on map movement
@@ -112,7 +153,9 @@ export function useGoogleEarthDates(
     return () => {
       // console.log("[useGoogleEarthDates] Cleaning up listeners");
       map.off("moveend", debouncedFetch);
-      // map.off("idle", debouncedFetch);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
   }, [map, enabled, fetchDates]);
 
