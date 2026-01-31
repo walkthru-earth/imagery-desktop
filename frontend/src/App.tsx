@@ -206,27 +206,34 @@ function App() {
   );
 
   // Update context when Esri dates change (use active map's dates as shared state)
+  // Dispatch whenever dates change AND source is esri (even if empty, to replace global dates)
   useEffect(() => {
-    console.log("[App] Single map Esri dates changed:", singleEsriDates.length);
-    if (singleEsriDates.length > 0 && state.viewMode === "single" && state.maps.single.source === "esri") {
-      console.log("[App] Dispatching SET_ESRI_DATES from single map");
-      dispatch({ type: "SET_ESRI_DATES", dates: singleEsriDates });
+    if (state.viewMode === "single" && state.maps.single.source === "esri") {
+      console.log("[App] Single map Esri dates changed:", singleEsriDates.length);
+      if (singleEsriDates.length > 0) {
+        console.log("[App] Dispatching SET_ESRI_DATES from single map");
+        dispatch({ type: "SET_ESRI_DATES", dates: singleEsriDates });
+      }
     }
   }, [singleEsriDates, state.viewMode, state.maps.single.source, dispatch]);
 
   useEffect(() => {
-    console.log("[App] Left map Esri dates changed:", leftEsriDates.length);
-    if (leftEsriDates.length > 0 && state.viewMode === "split" && state.maps.left.source === "esri") {
-      console.log("[App] Dispatching SET_ESRI_DATES from left map");
-      dispatch({ type: "SET_ESRI_DATES", dates: leftEsriDates });
+    if (state.viewMode === "split" && state.maps.left.source === "esri") {
+      console.log("[App] Left map Esri dates changed:", leftEsriDates.length);
+      if (leftEsriDates.length > 0) {
+        console.log("[App] Dispatching SET_ESRI_DATES from left map");
+        dispatch({ type: "SET_ESRI_DATES", dates: leftEsriDates });
+      }
     }
   }, [leftEsriDates, state.viewMode, state.maps.left.source, dispatch]);
 
   useEffect(() => {
-    console.log("[App] Right map Esri dates changed:", rightEsriDates.length);
-    if (rightEsriDates.length > 0 && state.viewMode === "split" && state.maps.right.source === "esri") {
-      console.log("[App] Dispatching SET_ESRI_DATES from right map");
-      dispatch({ type: "SET_ESRI_DATES", dates: rightEsriDates });
+    if (state.viewMode === "split" && state.maps.right.source === "esri") {
+      console.log("[App] Right map Esri dates changed:", rightEsriDates.length);
+      if (rightEsriDates.length > 0) {
+        console.log("[App] Dispatching SET_ESRI_DATES from right map");
+        dispatch({ type: "SET_ESRI_DATES", dates: rightEsriDates });
+      }
     }
   }, [rightEsriDates, state.viewMode, state.maps.right.source, dispatch]);
 

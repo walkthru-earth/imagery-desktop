@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import { debounce } from "@/utils/debounce";
 import { api, createBoundingBox } from "@/services/api";
@@ -14,7 +14,8 @@ export function useEsriDates(
   enabled: boolean
 ): AvailableDate[] {
   const [dates, setDates] = useState<AvailableDate[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const isLoadingRef = useRef(false);
+  const lastFetchKeyRef = useRef<string>("");
 
   // Check if dates are equal to avoid unnecessary updates
   const areDatesEqual = (d1: AvailableDate[], d2: AvailableDate[]) => {
@@ -27,16 +28,26 @@ export function useEsriDates(
     return true;
   };
 
-  // Memoize the fetch function to avoid recreating on every render
+  // Fetch function - stable reference using ref for loading state
   const fetchDates = useCallback(
     async (mapInstance: maplibregl.Map) => {
-      if (isLoading) return; // Prevent concurrent requests
+      if (isLoadingRef.current) {
+        console.log("[useEsriDates] Already loading, skipping");
+        return;
+      }
+
+      const bounds = mapInstance.getBounds();
+      const zoom = Math.round(mapInstance.getZoom());
+
+      // Create a key to avoid duplicate fetches for same viewport
+      const fetchKey = `${zoom}-${bounds.getSouth().toFixed(4)}-${bounds.getWest().toFixed(4)}`;
+      if (fetchKey === lastFetchKeyRef.current) {
+        console.log("[useEsriDates] Same viewport, skipping fetch");
+        return;
+      }
 
       try {
-        setIsLoading(true);
-        const bounds = mapInstance.getBounds();
-        const zoom = Math.round(mapInstance.getZoom());
-
+        isLoadingRef.current = true;
         console.log("[useEsriDates] Fetching local changes for zoom:", zoom);
 
         const bbox = createBoundingBox(
@@ -46,8 +57,8 @@ export function useEsriDates(
           bounds.getEast()
         );
 
-        // Use getAvailableDatesForArea which filters by local changes
         const fetchedDates = await api.getAvailableDatesForArea(bbox, zoom);
+        lastFetchKeyRef.current = fetchKey;
 
         setDates((prevDates) => {
           const newDates = fetchedDates || [];
@@ -60,17 +71,17 @@ export function useEsriDates(
         });
       } catch (error) {
         console.error("[useEsriDates] Error fetching dates:", error);
-        // Keep existing dates on error
       } finally {
-        setIsLoading(false);
+        isLoadingRef.current = false;
       }
     },
-    [isLoading]
+    [] // No dependencies - uses refs for mutable state
   );
 
+  // Effect to set up listeners and trigger initial fetch
   useEffect(() => {
     if (!map || !enabled) {
-      console.log("[useEsriDates] Hook disabled or no map");
+      console.log("[useEsriDates] Hook disabled or no map, enabled:", enabled);
       return;
     }
 
@@ -81,13 +92,18 @@ export function useEsriDates(
       fetchDates(map);
     }, 800);
 
-    // Initial fetch
-    if (map.loaded()) {
+    // Initial fetch - do it immediately when enabled
+    const doInitialFetch = () => {
+      console.log("[useEsriDates] Doing initial fetch");
+      // Reset the fetch key to force a new fetch
+      lastFetchKeyRef.current = "";
       fetchDates(map);
+    };
+
+    if (map.loaded()) {
+      doInitialFetch();
     } else {
-      map.once("load", () => {
-        fetchDates(map);
-      });
+      map.once("load", doInitialFetch);
     }
 
     // Fetch on map movement
