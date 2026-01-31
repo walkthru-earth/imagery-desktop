@@ -271,8 +271,8 @@ func (c *PersistentTileCache) evictOldTiles() {
 		currSize -= e.size
 	}
 
-	// Save updated metadata
-	c.saveMetadata()
+	// Save updated metadata (use locked version since we already hold the mutex)
+	c.saveMetadataLocked()
 }
 
 // evictExpiredTiles removes tiles that exceed TTL
@@ -302,7 +302,7 @@ func (c *PersistentTileCache) evictExpiredTiles() {
 	}
 
 	if len(toEvict) > 0 {
-		c.saveMetadata()
+		c.saveMetadataLocked()
 	}
 }
 
@@ -339,7 +339,11 @@ func (c *PersistentTileCache) loadMetadata() error {
 func (c *PersistentTileCache) saveMetadata() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return c.saveMetadataLocked()
+}
 
+// saveMetadataLocked saves metadata without acquiring locks (caller must hold lock)
+func (c *PersistentTileCache) saveMetadataLocked() error {
 	metaPath := filepath.Join(c.baseDir, "cache_index.json")
 
 	data, err := json.MarshalIndent(c.metadata, "", "  ")
@@ -426,8 +430,8 @@ func (c *PersistentTileCache) rebuildMetadata() error {
 
 	atomic.StoreInt64(&c.currSize, totalSize)
 
-	// Save rebuilt metadata
-	return c.saveMetadata()
+	// Save rebuilt metadata (use locked version since we already hold the mutex)
+	return c.saveMetadataLocked()
 }
 
 // parseIntSafe parses an integer safely, returning 0 on error

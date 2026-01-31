@@ -711,7 +711,29 @@ func (a *App) DownloadEsriImagery(bbox BoundingBox, zoom int, date string, forma
 		go func() {
 			defer wg.Done()
 			for tile := range tileChan {
-				data, err := a.esriClient.FetchTile(layer, tile)
+				var data []byte
+				var err error
+
+				// Check cache first
+				if a.tileCache != nil {
+					cacheKey := fmt.Sprintf("esri:%d:%d:%d:%s", zoom, tile.Column, tile.Row, date)
+					var found bool
+					data, found = a.tileCache.Get(cacheKey)
+					if found {
+						log.Printf("[Cache HIT] Esri tile z=%d x=%d y=%d (date: %s)", zoom, tile.Column, tile.Row, date)
+						resultChan <- tileResult{tile: tile, data: data, err: nil}
+						continue
+					}
+				}
+
+				// Fetch from network if not cached
+				data, err = a.esriClient.FetchTile(layer, tile)
+
+				// Cache the result if successful
+				if err == nil && a.tileCache != nil {
+					a.tileCache.Set("esri", zoom, tile.Column, tile.Row, date, data)
+				}
+
 				resultChan <- tileResult{tile: tile, data: data, err: err}
 			}
 		}()
@@ -1668,6 +1690,15 @@ func (a *App) extractQuadrantFromFallbackTile(data []byte, origRow, origCol, ori
 // fetchHistoricalGETile fetches a historical tile for the given GE tile coordinates and hexDate
 // It handles epoch lookup and fallback to nearest date
 func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]byte, error) {
+	// Check cache first
+	if a.tileCache != nil {
+		cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, hexDate)
+		if cachedData, found := a.tileCache.Get(cacheKey); found {
+			log.Printf("[Cache HIT] Historical tile %s (date: %s)", tile.Path, hexDate)
+			return cachedData, nil
+		}
+	}
+
 	// Get available dates for this specific tile to find the correct epoch
 	dates, err := a.geClient.GetAvailableDates(tile)
 	if err != nil {
@@ -1731,6 +1762,10 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 	data, err := a.geClient.FetchHistoricalTile(tile, epoch, foundHexDate)
 	if err == nil {
 		log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS on first attempt with epoch %d", epoch)
+		// Cache the result
+		if a.tileCache != nil {
+			a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+		}
 		return data, nil
 	}
 
@@ -1765,6 +1800,10 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		data, err := a.geClient.FetchHistoricalTile(tile, ef.epoch, foundHexDate)
 		if err == nil {
 			log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS with fallback epoch %d", ef.epoch)
+			// Cache the result
+			if a.tileCache != nil {
+				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+			}
 			return data, nil
 		}
 		log.Printf("[DEBUG fetchHistoricalGETile] Fallback epoch %d also failed", ef.epoch)
@@ -1794,6 +1833,10 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 		data, err := a.geClient.FetchHistoricalTile(tile, knownEpoch, foundHexDate)
 		if err == nil {
 			log.Printf("[DEBUG fetchHistoricalGETile] SUCCESS with known-good epoch %d", knownEpoch)
+			// Cache the result
+			if a.tileCache != nil {
+				a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+			}
 			return data, nil
 		}
 	}
