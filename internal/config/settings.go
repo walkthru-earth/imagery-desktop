@@ -101,7 +101,7 @@ func DefaultSettings() *UserSettings {
 		ShowCoordinates:     false,
 		AutoOpenDownloadDir: true,
 		MaxConcurrentTasks:  1,
-		TaskPanelOpen:       true,
+		TaskPanelOpen:       false,
 	}
 }
 
