@@ -1496,14 +1496,28 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Try cache first
+			// Try cache first - for current imagery, query the actual date from Google Earth
 			var data []byte
+			var tileDate string
 
-			if a.tileCache != nil {
-				// Build cache key using new format: provider:z:x:y
-				cacheKey := fmt.Sprintf("google:%d:%d:%d", tile.Level, tile.Column, tile.Row)
+			// Get the actual imagery date for this tile from Google Earth TimeMachine
+			if a.geClient != nil {
+				dates, err := a.geClient.GetAvailableDates(tile)
+				if err == nil && len(dates) > 0 {
+					// Use the most recent available date for this tile
+					latestDate := dates[0].Date
+					tileDate = latestDate.Format("2006-01-02")
+				}
+			}
+
+			// If we have a date, check cache
+			if tileDate != "" && a.tileCache != nil {
+				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, tileDate)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
+					if a.devMode {
+						log.Printf("[Cache HIT] Google Earth tile z=%d x=%d y=%d (date: %s)", tile.Level, tile.Column, tile.Row, tileDate)
+					}
 				}
 			}
 
@@ -1514,9 +1528,13 @@ func (a *App) handleGoogleEarthTile(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				// Cache the result using OGC ZXY structure
-				if a.tileCache != nil {
-					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, "", data)
+				if a.devMode && tileDate != "" {
+					log.Printf("[Cache MISS] Google Earth tile z=%d x=%d y=%d (date: %s) - fetched from network", tile.Level, tile.Column, tile.Row, tileDate)
+				}
+
+				// Cache the result if we have a date
+				if tileDate != "" && a.tileCache != nil {
+					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, tileDate, data)
 				}
 			}
 
