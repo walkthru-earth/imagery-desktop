@@ -1839,11 +1839,12 @@ func (a *App) fetchHistoricalGETile(tile *googleearth.Tile, hexDate string) ([]b
 }
 
 // handleGoogleEarthHistoricalTile handles requests for historical Google Earth tiles
-// URL format: /ge-historical/{hexDate}/{z}/{x}/{y}
+// URL format: /ge-historical/{date}_{hexDate}/{z}/{x}/{y}
+// date format: YYYY-MM-DD (for human-readable cache), hexDate: hex string (for tile fetching)
 // This handler reprojects GE tiles (Plate Carrée) to Web Mercator for MapLibre
 func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Request) {
 	// Parse path components
-	// Expected: /ge-historical/hexDate/z/x/y
+	// Expected: /ge-historical/{date}_{hexDate}/{z}/{x}/{y}
 	path := r.URL.Path
 	prefix := "/ge-historical/"
 	if !strings.HasPrefix(path, prefix) {
@@ -1853,11 +1854,19 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 
 	parts := strings.Split(path[len(prefix):], "/")
 	if len(parts) < 4 {
-		http.Error(w, "Invalid path format, expected /ge-historical/{hexDate}/{z}/{x}/{y}", http.StatusBadRequest)
+		http.Error(w, "Invalid path format, expected /ge-historical/{date}_{hexDate}/{z}/{x}/{y}", http.StatusBadRequest)
 		return
 	}
 
-	hexDate := parts[0]
+	// Split date_hexDate into date and hexDate
+	dateHexParts := strings.Split(parts[0], "_")
+	if len(dateHexParts) != 2 {
+		http.Error(w, "Invalid date format, expected {date}_{hexDate}", http.StatusBadRequest)
+		return
+	}
+
+	date := dateHexParts[0]      // Human-readable date (YYYY-MM-DD)
+	hexDate := dateHexParts[1]   // Hex date for tile fetching
 	var z, x, y int
 
 	if _, err := fmt.Sscanf(parts[1], "%d", &z); err != nil {
@@ -1907,8 +1916,8 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 			var data []byte
 
 			if a.tileCache != nil {
-				// Build cache key using new format: provider:z:x:y:date
-				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, hexDate)
+				// Build cache key using human-readable date for organized cache structure
+				cacheKey := fmt.Sprintf("google:%d:%d:%d:%s", tile.Level, tile.Column, tile.Row, date)
 				if cachedData, found := a.tileCache.Get(cacheKey); found {
 					data = cachedData
 					successCount++
@@ -1923,9 +1932,9 @@ func (a *App) handleGoogleEarthHistoricalTile(w http.ResponseWriter, r *http.Req
 					continue
 				}
 
-				// Cache the successful result using OGC ZXY structure with date
+				// Cache the successful result using OGC ZXY structure with human-readable date
 				if a.tileCache != nil {
-					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, hexDate, data)
+					a.tileCache.Set("google", tile.Level, tile.Column, tile.Row, date, data)
 				}
 				successCount++
 			}
@@ -2173,8 +2182,10 @@ func (a *App) GetGoogleEarthHistoricalTileURL(date string, hexDate string, epoch
 	}
 	// Note: epoch parameter kept for API compatibility but not used in URL
 	// Each tile looks up its own epoch from the quadtree
-	// Use regular date format (YYYY-MM-DD) for caching, still use historical endpoint
-	return fmt.Sprintf("%s/ge-historical/%s/{z}/{x}/{y}", a.tileServerURL, hexDate), nil
+	// Use regular date format (YYYY-MM-DD) in URL for human-readable cache structure
+	// Format: /ge-historical/{date}_{hexDate}/{z}/{x}/{y}
+	// This allows the handler to extract both date (for caching) and hexDate (for fetching)
+	return fmt.Sprintf("%s/ge-historical/%s_%s/{z}/{x}/{y}", a.tileServerURL, date, hexDate), nil
 }
 
 // DownloadGoogleEarthHistoricalImagery downloads historical Google Earth imagery for a bounding box
